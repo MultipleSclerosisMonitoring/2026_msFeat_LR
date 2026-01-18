@@ -1,0 +1,8 @@
+pandas
+numpy
+pyyaml
+influxdb-client
+urllib3
+openpyxl
+pydantic
+tables

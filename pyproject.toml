@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gait_analysis"
+version = "0.1.0"
+dependencies = [
+    "pandas",
+    "pydantic",
+    "influxdb-client",
+    "tables",
+    "pyyaml"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

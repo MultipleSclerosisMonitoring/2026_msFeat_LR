@@ -1,0 +1,10 @@
+{
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/2026_msFeat_TEA",
+        "./2026_msFeat_TEA"
+    ],
+    "python.autoComplete.extraPaths": [
+        "${workspaceFolder}/2026_msFeat_TEA",
+        "./2026_msFeat_TEA"
+    ]
+}
