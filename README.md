@@ -11,16 +11,12 @@ This project focuses on the automated acquisition and processing of high-frequen
 
 ## Project Structure
 ```text
-2026_msFeat_TEA/
+2026_msFeat_LR/
 ├── src/gait_analysis/       # Core package: extraction & processing logic
 │   ├── __init__.py          # Package initializer
 │   ├── extractor.py         # InfluxDB connection and HDF5 management
 │   └── README.md            # Technical documentation for the module
-├── scripts/                 # Executable scripts (Entry points)
-│   ├── batch_extractor.py   # CLI tool for massive data extraction
-│   └── README.md            # Usage guide for scripts
 ├── data/                    # Data storage
-│   └── raw/                 # Local HDF5 databases (.h5)
 ├── InfluxDBms/              # Database connection credentials (YAML)
 ├── pyproject.toml           # Project metadata and local package config
 ├── requirements.txt         # External dependencies list
@@ -32,10 +28,11 @@ This project focuses on the automated acquisition and processing of high-frequen
 python -m venv .venv
 
 ## Activate the environment (Windows PowerShell)
+```text
 .\.venv\Scripts\activate
+```
 
 ## Dependency Installation
-pip install -r requirements.txt
-
-## Local Package Installation
-pip install -e .
+```bash
+poetry install
+```
