@@ -1,0 +1,48 @@
+[tool.poetry]
+name        = "ms_monitoring"
+version     = "0.1.0"
+description = "Basic Processing Wearable Sensoria + HealthyWear"
+authors     = [
+  "Diego Parrilla Calderon <…>",
+  "Joaquín Ordieres-Meré <…>"
+]
+readme      = "README.md"
+keywords    = ["SclerosisMonitoring", "msTools", "python", "msCodeID"]
+license     = "MIT"
+homepage    = "https://github.com/MultipleSclerosisMonitoring/DPC_2024"
+repository  = "https://github.com/MultipleSclerosisMonitoring/DPC_2024"
+
+# Empaquetamos explícitamente cada directorio que tiene código
+packages = [
+  { include = "ms_monitoring" },
+  { include = "msTools"       },
+  { include = "msCodeID"      },
+  { include = "msGait"        },
+]
+
+[tool.poetry.dependencies]
+python            = ">=3.11,<4.0"
+pandas            = ">=2.0.0"
+psycopg2          = ">=2.9.5"
+influxdb-client   = ">=1.35.0"
+PyYAML            = ">=6.0.1"
+pydantic = "^2.11.7"
+scipy = "^1.15.3"
+xlsxwriter = ">=3.2.4,<4.0"
+fastapi = "^0.100.0"
+uvicorn = {extras=["standard"], version="^0.23.0"}
+
+
+[tool.poetry.urls]
+homepage   = "https://github.com/MultipleSclerosisMonitoring/DPC_2024"
+repository = "https://github.com/MultipleSclerosisMonitoring/DPC_2024"
+issues     = "https://github.com/MultipleSclerosisMonitoring/DPC_2024/issues"
+
+[tool.poetry.group.dev.dependencies]
+sphinx = ">=7.1,<8.0"
+sphinx-autodoc-typehints = ">1.24.0,<4"
+sphinx_rtd_theme = ">=1.3,<2"
+
+[build-system]
+requires       = ["poetry-core>=1.0.0"]
+build-backend  = "poetry.core.masonry.api"

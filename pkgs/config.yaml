@@ -1,0 +1,30 @@
+influxdb:
+  org: 'XXX'
+  bucket: 'XXX/autogen'
+  measurement: 'XXX'
+  url: "https://XXX"
+  token: 'XXX'
+  verify: false
+  timeout: 900000
+
+postgresql:
+  host: "XXX"
+  user: "XXX"
+  password: "XXX"
+  database: "XXX"
+  port: 5432
+
+movement:
+  # Umbral para el módulo de aceleración (is_effective_by_time)
+  accel_threshold: 0.2
+  # Umbral para el módulo de giroscopio (is_effective_by_time)
+  gyro_threshold: 60
+  # Threshold de potencia en la banda de frecuencia Accel
+  accel_power_threshold: 0.125
+  # Threshold de potencia en la banda de frecuencia Gyro
+  gyro_power_threshold: 1000
+  # Banda de frecuencia para Welch (Hz)
+  freq_band_min: 0.4
+  freq_band_max: 1.6
+  # Mínimo de picos dentro de un segmento de análisis ~ 7s 
+  min_continuous_hits: 3

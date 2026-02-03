@@ -1,0 +1,358 @@
+# Internationalization para msGait app.
+# Copyright (C) YEAR THE PACKAGE’S COPYRIGHT HOLDER
+# Este archivo se distribuye bajo la misma licencia que el paquete.
+# Joaquin Ordiers Mere <j.ordieres@upm.es>, 2025
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-04-22 00:02+0200\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: JOAQUIN ORDIERES <j.ordieres@upm.es>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: ms_monitoring/find_gait.py:25
+msgid "ARG_TIT_FIND_GAIT"
+msgstr "Parámetros para la aplicación msGait."
+
+#: ms_monitoring/find_gait.py:27
+msgid "ARG_LIST_ACT_ALL_IDS"
+msgstr "Lista de IDs de activity_all en PostgreSQL"
+
+#: ms_monitoring/find_gait.py:29
+#: ms_monitoring/find_mscodeids.py:47
+msgid "ARG_STR_PATH_YAML"
+msgstr "Ruta al fichero CONFIG.YAML"
+
+#: ms_monitoring/find_gait.py:31
+#: ms_monitoring/find_mscodeids.py:41
+msgid "ARG_STR_LNG"
+msgstr "Idioma: [en|es]"
+
+#: ms_monitoring/find_gait.py:33
+msgid "ARG_STR_FOUT"
+msgstr "Ruta al Excel con datos extraídos de InfluxDB"
+
+#: ms_monitoring/find_gait.py:35
+#: ms_monitoring/find_mscodeids.py:49
+msgid "ARG_VB_LEVEL"
+msgstr "Nivel de verbosidad [0: Ninguno|1: Básico|2: Detallado]"
+
+#: ms_monitoring/find_gait.py:37
+#: ms_monitoring/find_mscodeids.py:51
+msgid "ARG_HEAD_ROWS"
+msgstr "Número de filas a mostrar en verbosidad nivel 2"
+
+#: ms_monitoring/find_gait.py:39
+msgid "ARG_SAVE"
+msgstr "0: no guardar, 1: guardar resultados en PostgreSQL"
+
+#: ms_monitoring/find_gait.py:59
+msgid "FGAIT_1ST"
+msgstr "Buscando marchas efectivas..."
+
+#: ms_monitoring/find_gait.py:64
+msgid "FGAIT_NO_WALK"
+msgstr "No se encontraron marchas efectivas en el rango"
+
+#: ms_monitoring/find_gait.py:68
+msgid "FGAIT_WKLS_FND"
+msgstr "Primeras marchas detectadas."
+
+#: ms_monitoring/find_gait.py:75
+msgid "FGAIT_NUM_WALKS"
+msgstr "Marchas efectivas guardadas: {ns}."
+
+#: ms_monitoring/find_gait.py:81
+msgid "NO_GAIT_PERIODS"
+msgstr "No se encontraron periodos de marcha simultánea."
+
+#: ms_monitoring/find_gait.py:84
+msgid "GAIT_PERIODS_HEADER"
+msgstr "Periodos de marcha simultánea (ambos pies):"
+
+#: ms_monitoring/find_gait.py:96
+msgid "GAIT_SAVED_COUNT"
+msgstr "Registros de effective_gait guardados: {n}."
+
+#: ms_monitoring/find_gait.py:99
+msgid "FGAIT_END"
+msgstr "Proceso finalizado."
+
+#: ms_monitoring/find_mscodeids.py:37
+msgid "DESC_FIND_MSCodeIDs"
+msgstr "Buscar msCodeIDs y guardar ventanas de actividad en PostgreSQL."
+
+#: ms_monitoring/find_mscodeids.py:43
+msgid "ARG_STR_TIME_FROM"
+msgstr "Fecha y hora inicio (formato: 'YYYY-MM-DD HH:MM:SS')."
+
+#: ms_monitoring/find_mscodeids.py:45
+msgid "ARG_STR_TIME_UNTIL"
+msgstr "Fecha y hora fin (formato: 'YYYY-MM-DD HH:MM:SS')."
+
+#: ms_monitoring/find_mscodeids.py:82
+#, python-brace-format
+msgid "ERR_END_BEFORE_START"
+msgstr "Error: la fecha fin ({end}) es anterior a la de inicio ({start})."
+
+#: ms_monitoring/find_mscodeids.py:89
+#, python-brace-format
+msgid "MSG_GET_MSCodeIDs_RANGE"
+msgstr "Obteniendo msCodeIDs de {start} a {end}..."
+
+#: ms_monitoring/find_mscodeids.py:102
+msgid "MSG_NO_CODEIDS_FOUND"
+msgstr "No se encontraron CodeIDs."
+
+#: ms_monitoring/find_mscodeids.py:106
+#, python-brace-format
+msgid "MSG_FOUND_N_CODEIDS"
+msgstr "Encontrados {n} CodeIDs distintos de {start} a {end}."
+
+#: ms_monitoring/find_mscodeids.py:110
+msgid "LBL_CODEIDS_HEADER"
+msgstr "Lista de CodeIDs:"
+
+#: ms_monitoring/find_mscodeids.py:112
+msgid "LIST_ITEM_CODEID"
+msgstr "  - {cid}"
+
+#: ms_monitoring/find_mscodeids.py:117
+#, python-brace-format
+msgid "MSG_PROCESSING_CODEID"
+msgstr "Procesando CodeID: {codeid}..."
+
+#: ms_monitoring/find_mscodeids.py:123
+#, python-brace-format
+msgid "ERR_STORING_CODEID"
+msgstr "Error al guardar CodeID {codeid}: {error}"
+
+#: ms_monitoring/find_mscodeids.py:132
+#, python-brace-format
+msgid "ERR_FETCH_DATA"
+msgstr "Error al obtener datos de CodeID {codeid}: {error}"
+
+#: ms_monitoring/find_mscodeids.py:137
+#, python-brace-format
+msgid "MSG_NO_DATA_FOR_CODEID"
+msgstr "No hay datos para CodeID: {codeid}."
+
+#: ms_monitoring/find_mscodeids.py:142
+msgid "ERR_FOOT_MISSING"
+msgstr "Falta la columna 'Foot' en datos de CodeID {codeid}."
+
+#: ms_monitoring/find_mscodeids.py:164
+#: ms_monitoring/find_mscodeids.py:170
+msgid "WARN_NO_SEGMENTS_LEG"
+msgstr "No hay segmentos para CodeID {codeid}, pie {foot}."
+
+#: ms_monitoring/find_mscodeids.py:178
+#: ms_monitoring/find_mscodeids.py:185
+#, python-brace-format
+msgid "INFO_SEGMENTS_STORED"
+msgstr "Segmentos guardados ({n} filas):"
+
+#: ms_monitoring/find_mscodeids.py:196
+#, python-brace-format
+msgid "INFO_MERGED_STORED"
+msgstr "Segmentos finales integrados ({n} filas):"
+
+#: ms_monitoring/find_mscodeids.py:199
+#, python-brace-format
+msgid "ERR_PROCESS_SEGMENTS"
+msgstr "Error procesando segmentos para CodeID {codeid}: {error}"
+
+#: ms_monitoring/find_mscodeids.py:202
+msgid "INFO_ALL_PROCESSED"
+msgstr "Todos los CodeIDs procesados correctamente."
+
+#: msTools/data_manager.py:82
+msgid "PGSQL-CONN-ERR"
+msgstr "Error al conectar con PostgreSQL: {e}"
+
+#: msTools/data_manager.py:126
+msgid "INFO_CREATE_TABLE"
+msgstr "Creando tabla {table} desde {file}..."
+
+#: msTools/data_manager.py:132
+msgid "INFO_TABLE_EXISTS"
+msgstr "La tabla {table} ya existe."
+
+#: msTools/data_manager.py:135
+msgid "PGSQL-TAB-ERR"
+msgstr "Error al verificar/crear tablas: {e}"
+
+#: msTools/data_manager.py:171
+msgid "INFL-QRY-COD-ERR"
+msgstr "Error al obtener CodeIDs de InfluxDB: {e}"
+
+#: msTools/data_manager.py:190
+#: msGait/movement_detector.py:88
+msgid "PGSQL-QRY-GEN-ERR"
+msgstr "Error al ejecutar la consulta SQL: {e}"
+
+#: msTools/data_manager.py:214
+msgid "INFO_SEGMENTS_BY_IDS"
+msgstr "Recuperando segmentos por IDs: {ids}"
+
+#: msTools/data_manager.py:224
+msgid "ERR_MISSING_IDS_OR_WINDOW"
+msgstr "Debe especificar `ids` o la ventana `fstart`/`fend`."
+
+#: msTools/data_manager.py:226
+msgid "INFO_SEGMENTS_BY_RANGE"
+msgstr "Recuperando segmentos de {start} a {end}"
+
+#: msTools/data_manager.py:238
+msgid "WARN_NO_SEGMENTS_FOUND"
+msgstr "No se encontraron segmentos."
+
+#: msTools/data_manager.py:259
+msgid "VB_REG_ACT_ALL"
+msgstr "Procesando fila {row} de activity_all"
+
+#: msTools/data_manager.py:270
+msgid "VB-ACT-ALL-LEGS"
+msgstr "\tProducidos {ns} registros de piernas."
+
+#: msTools/data_manager.py:301
+msgid "INFO_CODEID_NEW"
+msgstr "CodeID {codeid} ⇒ nuevo, id = {id}"
+
+#: msTools/data_manager.py:306
+msgid "INFO_CODEID_EXIST"
+msgstr "CodeID {codeid} ⇒ existente, id = {id}"
+
+#: msTools/data_manager.py:310
+msgid "PGSQL-VAL-COD-ERR"
+msgstr "Error de validación al guardar CodeID: {e}"
+
+#: msTools/data_manager.py:314
+msgid "PGSQL-INS-COD-ERR"
+msgstr "Error al almacenar CodeID: {e}"
+
+#: msTools/data_manager.py:360
+#: msGait/movement_detector.py:427
+msgid "PGSQL-INS-TAB-NOD-ERR"
+msgstr "No hay datos para almacenar en {table_name}."
+
+#: msTools/data_manager.py:365
+msgid "PGSQL-INS-TAB-INFO"
+msgstr "Guardando datos en la tabla {table_name}..."
+
+#: msTools/data_manager.py:400
+msgid "ERR_UNKNOWN_TABLE"
+msgstr "Tabla no reconocida: {table}"
+
+#: msTools/data_manager.py:415
+msgid "PGSQL-INS-TAB-OK"
+msgstr "Datos guardados en la tabla {table_name}."
+
+#: msTools/data_manager.py:417
+msgid "PGSQL-LST-INS"
+msgstr "IDs insertados: {ids}"
+
+#: msTools/data_manager.py:420
+msgid "PGSQL-VAL-TAB-ERR"
+msgstr "Error al validar datos: {e}"
+
+#: msTools/data_manager.py:423
+#: msGait/movement_detector.py:432
+msgid "PGSQL-INS-TAB-ERR"
+msgstr "Error al guardar datos en la tabla: {e}"
+
+#: msTools/data_manager.py:442
+msgid "ERR_CODEID_NOT_FOUND"
+msgstr "No existe CodeID para id {id}"
+
+#: msTools/data_manager.py:444
+#: msTools/data_manager.py:482
+msgid "PGSQL-QRY-COD-ERR"
+msgstr "Error al recuperar CodeID: {e}"
+
+#: msTools/data_manager.py:480
+msgid "PGSQL-QRY-CLNAME-NONE"
+msgstr "No hay registros en activity_all para columna {clname} con valores {clegs}"
+
+#: msGait/movement_detector.py:51
+msgid "FGAIT_NO_WINS"
+msgstr "No se encontraron ventanas de actividad."
+
+#: msGait/movement_detector.py:114
+msgid "WARN_EMPTY_RANGE"
+msgstr "Rango vacío para CodeID {codeid}, pie {foot}"
+
+#: msGait/movement_detector.py:117
+msgid "INFL-QRY-DATA-ERR"
+msgstr "Error al obtener datos de InfluxDB: {e}"
+
+#: msGait/movement_detector.py:134
+msgid "MVDET-AG-NODAT"
+msgstr "Faltan datos para calcular |a| y |g|."
+
+#: msGait/movement_detector.py:210
+msgid "ERR_MISSING_TIME_COLUMN"
+msgstr "El DataFrame debe tener la columna '_time'."
+
+#: msGait/movement_detector.py:257
+msgid "MVNT-ROOT-MISS"
+msgstr "Falta la columna 'foot' en activity_windows."
+
+#: msGait/movement_detector.py:270
+#: msGait/movement_detector.py:275
+msgid "MVNT-TS-NOV"
+msgstr "Ignorando timestamps no válidos: {row}"
+
+#: msGait/movement_detector.py:283
+msgid "MVNT-QRY-DAT"
+msgstr "Procesando CodeID: {cid}. Desde: {frm}. Duración: {dur}."
+
+#: msGait/movement_detector.py:307
+msgid "MVNT-XLSX-DAT"
+msgstr "Hoja Excel {shn} en archivo {file}."
+
+#: msGait/movement_detector.py:310
+msgid "MVNT-QRY-REC"
+msgstr "Registros recuperados: {ns}"
+
+#: msGait/movement_detector.py:348
+msgid "LST-SEGS"
+msgstr "Lista de segmentos:\n{results}"
+
+#: msGait/movement_detector.py:351
+msgid "MVNT-WLK-FOOT"
+msgstr "Marcha detectada: codeid_id={cid}, pie={foot}, duración={dur}."
+
+#: msGait/movement_detector.py:363
+msgid "MVNT-VAL-EFF-ERR"
+msgstr "Error de validación al identificar movimiento: {e}"
+
+#: msCodeID/codeid_processor.py:54
+msgid "NO_DATA_CODEID"
+msgstr "No hay datos para CodeID {codeid}."
+
+#: msCodeID/codeid_processor.py:56
+msgid "DATA_RETRIEVED_CODEID"
+msgstr "Datos recuperados para CodeID {codeid}: {rows} filas."
+
+#: msCodeID/codeid_processor.py:59
+msgid "ERR_INFLUX_FETCH"
+msgstr "Error al consultar InfluxDB para CodeID {codeid}: {error}"
+
+#: msCodeID/codeid_processor.py:108
+msgid "MSG_NO_DATA_DF"
+msgstr "No hay datos en el DataFrame proporcionado."
+
+#: msCodeID/codeid_processor.py:257
+msgid "MSG_NO_DATA_SAVE"
+msgstr "No hay datos para guardar en la tabla {table}."
+
+#: msCodeID/codeid_processor.py:263
+msgid "ERR_SAVE_TABLE"
+msgstr "Error al guardar datos en la tabla {table}: {error}"
