@@ -9,8 +9,8 @@ influxdb:
 
 postgresql:
   host: "apiivm78.etsii.upm.es"
-  user: "upmfhug"
-  password: "Esclerosis#2025"
+  user: "lectura"
+  password: "ncorrea#2022"
   database: "MsGait"
   port: 5432
 
