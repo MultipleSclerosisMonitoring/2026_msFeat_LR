@@ -95,10 +95,22 @@ class cInfluxDB:
         # Elimina columnas internas que pueden molestar
         df = df.drop(columns=[col for col in ['result', 'table'] if col in df.columns])
 
+        # ... código anterior dentro de query_data ...
+        # 1. Comprobamos si el DataFrame está vacío
+        if df.empty:
+            print("⚠️ AVISO: La consulta no devolvió ningún dato.")
+            return df
+        
+        # 2. Comprobamos si la columna '_time' existe antes de ordenar
+        if '_time' not in df.columns:
+            print(f"⚠️ AVISO: No se encontró la columna '_time'. Columnas disponibles: {df.columns.tolist()}")
+            return df
+
+        # Si todo está bien, ordenamos como antes
         return df.sort_values(by="_time", ascending=False).reset_index(drop=True)
+        # --- FIN DEL CAMBIO ---
 
    
-
     def query_with_aggregate_window(self, from_date: datetime, to_date: datetime, window_size: str = "20ms", qtok: str = None, pie: str = None, metrics=None) -> pd.DataFrame:
         """
         Query data in InfluxDB with aggregateWindow, pivoting the results to get metrics as columns.
