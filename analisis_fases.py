@@ -18,16 +18,16 @@ df = df.sort_values(by='_time').reset_index(drop=True)
 # 2. Suma de Presiones RAW (Cruda y Ruidosa)
 df['Presion_Raw'] = df['S0'] + df['S1'] + df['S2']
 
-# ---------------------------------------------------------
-# 🧹 3. FILTRADO (SUAVIZADO) - EL PASO CLAVE
-# ---------------------------------------------------------
+
+# 3. FILTRADO (SUAVIZADO)
+
 # Usamos una ventana de 15 muestras para eliminar el ruido de "sierra".
 # Esto convertirá la mancha negra en una línea limpia.
 df['Presion_Smooth'] = df['Presion_Raw'].rolling(window=15, center=True).mean().bfill().ffill()
 
-# ---------------------------------------------------------
-# 🧠 4. CÁLCULO DE UMBRAL DINÁMICO (Usando la señal limpia)
-# ---------------------------------------------------------
+
+# 4. CÁLCULO DE UMBRAL DINÁMICO
+
 # Calculamos los máximos y mínimos sobre la señal YA FILTRADA
 val_aire = np.percentile(df['Presion_Smooth'], 95)
 val_suelo = np.percentile(df['Presion_Smooth'], 5)
@@ -47,11 +47,11 @@ muestras_balanceo = total_muestras - muestras_apoyo
 porcentaje_apoyo = (muestras_apoyo / total_muestras) * 100
 porcentaje_balanceo = (muestras_balanceo / total_muestras) * 100
 
-print(f"\n👣 ANÁLISIS DE FASES (CON FILTRADO DE RUIDO)")
+print(f"\nANÁLISIS DE FASES (CON FILTRADO DE RUIDO)")
 print(f"---------------------------------------------")
-print(f"🔧 Calibración: Aire={val_aire:.0f} | Suelo={val_suelo:.0f} | Umbral={umbral_dinamico:.0f}")
-print(f"✅ Fase de Apoyo (Stance):   {porcentaje_apoyo:.2f}%  (Normal: ~60%)")
-print(f"✈️ Fase de Balanceo (Swing): {porcentaje_balanceo:.2f}%  (Normal: ~40%)")
+print(f"Calibración: Aire={val_aire:.0f} | Suelo={val_suelo:.0f} | Umbral={umbral_dinamico:.0f}")
+print(f"Fase de Apoyo (Stance):   {porcentaje_apoyo:.2f}%  (Normal: ~60%)")
+print(f"Fase de Balanceo (Swing): {porcentaje_balanceo:.2f}%  (Normal: ~40%)")
 print(f"---------------------------------------------")
 
 # 7. GRÁFICA COMPARATIVA
@@ -63,7 +63,7 @@ apoyo = df['Is_Stance']
 # A. Pintamos la señal Ruidosa (Fina y transparente)
 plt.plot(tiempo, df['Presion_Raw'], color='gray', alpha=0.3, linewidth=0.5, label='Señal Raw (Ruidosa)')
 
-# B. Pintamos la señal FILTRADA (Gruesa y negra) -> ¡Esta es la que vale!
+# B. Pintamos la señal FILTRADA (Gruesa y negra)
 plt.plot(tiempo, df['Presion_Smooth'], color='black', linewidth=2, label='Señal Filtrada')
 
 # C. Umbral
