@@ -33,8 +33,7 @@ def calcular_cadencia(df):
         
         # Recorrido manual optimizado
         signal_values = signal.values
-        time_values = times.values
-        t_stamps = [t.timestamp() for t in time_values] # Pre-cálculo para velocidad
+        t_stamps = (df['_time'] - df['_time'].iloc[0]).dt.total_seconds().values
         
         for i in range(1, len(signal)-1):
             actual = signal_values[i]
@@ -91,17 +90,17 @@ def calcular_fases(df):
 # ---------------------------------------------------------
 def main():
     if not os.path.exists(ARCHIVO_INPUT):
-        print("❌ Error: No se encuentra el archivo HDF5.")
+        print("Error: No se encuentra el archivo HDF5.")
         return
 
-    print(f"🚀 Iniciando Análisis Masivo sobre: {ARCHIVO_INPUT}")
+    print(f"Iniciando Análisis Masivo sobre: {ARCHIVO_INPUT}")
     
     resultados_globales = []
     
     with pd.HDFStore(ARCHIVO_INPUT, mode='r') as store:
         keys = store.keys()
         total_pacientes = len(keys)
-        print(f"📂 Pacientes encontrados: {total_pacientes}\n")
+        print(f"Pacientes encontrados: {total_pacientes}\n")
         
         for i, key in enumerate(keys):
             try:
@@ -123,7 +122,7 @@ def main():
                 pasos, cadencia = calcular_cadencia(df)
                 pct_apoyo, pct_swing = calcular_fases(df)
                 
-                print(f"✅ (Cad: {cadencia:.1f} | Apoyo: {pct_apoyo:.1f}%)")
+                print(f"(Cad: {cadencia:.1f} | Apoyo: {pct_apoyo:.1f}%) | Num_Pasos: {pasos:.1f})")
                 
                 # Guardar fila de resultados
                 resultados_globales.append({
@@ -138,7 +137,7 @@ def main():
                 })
                 
             except Exception as e:
-                print(f"❌ ERROR: {e}")
+                print(f"ERROR: {e}")
                 resultados_globales.append({
                     "ID_Paciente": key,
                     "Estado": f"ERROR: {str(e)}"
@@ -150,11 +149,11 @@ def main():
     if resultados_globales:
         df_final = pd.DataFrame(resultados_globales)
         df_final.to_excel(ARCHIVO_OUTPUT, index=False)
-        print(f"\n🎉 ¡PROCESO TERMINADO!")
-        print(f"📄 Informe guardado en: {os.path.abspath(ARCHIVO_OUTPUT)}")
-        print(f"📊 Total procesados: {len(df_final)}")
+        print(f"\nProceso terminado")
+        print(f"Informe guardado en: {os.path.abspath(ARCHIVO_OUTPUT)}")
+        print(f"Total procesados: {len(df_final)}")
     else:
-        print("⚠️ No se generaron resultados.")
+        print("No se generaron resultados.")
 
 if __name__ == "__main__":
     main()
