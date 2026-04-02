@@ -1,5 +1,41 @@
 influxdb:
-  bucket: "Gait/autogen"
-  org: "UPM"
-  token: "Zx2jR8PD6h3YlS7HVsY5Han1SzF_iz7uk8n5z9BYRZ5q50lk8r1L18N-nFZiGCa57oowLgl8656pVpCig-GANg=="
-  url: "https://138.100.82.178:8086"
+  bucket: "bucket"
+  # 🇬🇧 The name of the bucket where the gait signals are stored.
+  # 🇪🇸 El nombre del bucket donde están almacenadas las señales de marcha.
+
+  org: "organización"
+  # 🇬🇧 The name of the organization inside InfluxDB.
+  # 🇪🇸 El nombre de la organización dentro de InfluxDB.
+
+  token: "TOKEN de ACCESO"
+  # 🇬🇧 Your private API Token with read access to the database.
+  # 🇪🇸 Tu Token de API privado con permisos de lectura a la base de datos.
+
+  url: "url"
+  # 🇬🇧 The URL of your InfluxDB server. Use the actual domain name to avoid SSL errors.
+  # 🇪🇸 La URL de tu servidor InfluxDB. Usa el nombre de dominio real para evitar errores SSL.
+
+
+# ==============================================================================
+# 🇬🇧 IMPORTANT / SECURITY NOTICE
+# This is a dummy/template configuration file. DO NOT put your real credentials here.
+# 
+# To make the extraction code work, you MUST do the following:
+# 1. Go to the file named `.config_db.yaml` (with a leading dot).
+# 2. Fill in your actual InfluxDB credentials in that hidden file.
+# 
+# The main code (via extractor.py) is strictly configured to read the hidden 
+# `.config_db.yaml` file to prevent accidental leaks of security tokens to GitHub.
+# (The hidden file is ignored by git via the .gitignore file).
+# ==============================================================================
+# 🇪🇸 AVISO IMPORTANTE / SEGURIDAD
+# Este es un archivo de configuración de plantilla/falso. NO pongas tus credenciales reales aquí.
+# 
+# Para que el código de extracción funcione, DEBES hacer lo siguiente:
+# 1. Ir al archivo llamado `.config_db.yaml` (con un punto al principio).
+# 2. Rellena tus credenciales reales de InfluxDB en ese archivo oculto.
+# 
+# El código principal (vía extractor.py) está configurado estrictamente para leer el 
+# archivo oculto `.config_db.yaml` para evitar la filtración accidental de tokens de 
+# seguridad a GitHub. (El archivo oculto es ignorado por git a través del archivo .gitignore).
+# ==============================================================================

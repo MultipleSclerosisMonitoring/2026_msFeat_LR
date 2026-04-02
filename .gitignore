@@ -207,3 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 data/raw/gait_study_data.h5
+
+# Token de acceso
+.config_db.yaml
