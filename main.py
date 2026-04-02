@@ -17,7 +17,7 @@ print("Iniciando el Motor de Extracción...")
 
 # 1. Instanciamos el Extractor Profesional
 try:
-    extractor = GaitDataExtractor(config_file="config_db.yaml", output_folder=CARPETA_SALIDA)
+    extractor = GaitDataExtractor(config_file=".config_db.yaml", output_folder=CARPETA_SALIDA)
     
     # 2. Ejecutamos la extracción masiva leyendo tu CSV
     extractor.run_batch_extraction(csv_path=ARCHIVO_CSV, test_type=TIPO_TEST)
