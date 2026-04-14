@@ -7,6 +7,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from influxdb_client import InfluxDBClient
 
+
 class InfluxConfig(BaseModel):
     """Esquema de validación para la configuración de InfluxDB.
 
@@ -67,9 +68,11 @@ class GaitDataExtractor:
             url=validated_config.url,
             token=validated_config.token,
             org=validated_config.org,
-            timeout=30000,
-            verify_ssl=False
+            timeout=30000  ,
+            verify_ssl=False,
+            ssl_ca_cert=None
         )
+
         self._bucket = validated_config.bucket
 
     def _load_config(self, config_path: str) -> Dict[str, Any]:
