@@ -157,3 +157,28 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+import pandas as pd
+import os
+
+# Ruta al archivo generado por tu extractor
+archivo_h5 = 'data/raw/gait_study_data.h5' 
+
+if os.path.exists(archivo_h5):
+    try:
+        # Abrimos el almacén en modo lectura ('r')
+        with pd.HDFStore(archivo_h5, mode='r') as store:
+            # El archivo HDF5 funciona como un diccionario con claves (keys)
+            claves = store.keys()
+            print(f"Pacientes encontrados: {claves}")
+            
+            if len(claves) > 0:
+                # Cargamos el primer paciente disponible en un DataFrame
+                df = store.get(claves[0])
+                print("Datos cargados correctamente:")
+                print(df.head()) # Muestra las primeras 5 filas
+    except Exception as e:
+        print(f"Error al leer el archivo HDF5: {e}")
+else:
+    print(f"Error: No se encuentra el archivo en {archivo_h5}")
