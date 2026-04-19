@@ -5,7 +5,7 @@ from msTools.data_manager import DataManager
 from msTools import i18n
 from msTools.models import ActivityLeg, ActivityAll
 from msGait.models import ActivitySegment
-from msTools.timeutils import ensure_utc
+from msTools.timeutils import influx_wallclock_z
 
 class CodeIDProcessor:
     """
@@ -36,9 +36,9 @@ class CodeIDProcessor:
         :param end_datetime: End of time range.
         :return: DataFrame of InfluxDB query results.
         """
-        # Normalize to UTC format
-        start_str = ensure_utc(start_datetime).isoformat().replace("+00:00", "Z")
-        end_str   = ensure_utc(end_datetime).isoformat().replace("+00:00", "Z")
+        # Influx contains experiment-table wall-clock timestamps serialized as UTC.
+        start_str = influx_wallclock_z(start_datetime)
+        end_str = influx_wallclock_z(end_datetime)
 
         query = f'''
         from(bucket: "{self.bucket}")

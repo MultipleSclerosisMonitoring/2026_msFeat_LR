@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from msTools import i18n
 from msTools.data_manager import DataManager
 from msCodeID.codeid_processor import CodeIDProcessor
-from msTools.timeutils import ensure_utc
+from msTools.timeutils import experiment_wallclock
 
 
 class VAction(argparse.Action):
@@ -74,21 +74,21 @@ def main():
     data_manager = DataManager(config_path=args.config_file)
     codeid_processor = CodeIDProcessor(data_manager)
 
-    # Handle dates using ensure_utc()
+    # Handle dates as experiment-table wall-clock values; Influx uses the same clock.
     if args.from_date:
-        start_datetime = ensure_utc(args.from_date)
+        start_datetime = experiment_wallclock(args.from_date)
     else:
         # default: midnight yesterday
         tmp = datetime.now() - timedelta(days=1)
         tmp = tmp.replace(hour=0, minute=0, second=0, microsecond=0)
-        start_datetime = ensure_utc(tmp)
+        start_datetime = experiment_wallclock(tmp)
 
     if args.until_date:
-        end_datetime = ensure_utc(args.until_date)
+        end_datetime = experiment_wallclock(args.until_date)
     else:
         madrid_tz    = ZoneInfo("Europe/Madrid")
         end_datetime = datetime.now(madrid_tz)
-        end_datetime = ensure_utc(end_datetime)
+        end_datetime = experiment_wallclock(end_datetime)
 
     # If end is before start, error and exit
     if end_datetime < start_datetime:

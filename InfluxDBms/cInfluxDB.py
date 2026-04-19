@@ -3,6 +3,28 @@ from influxdb_client import InfluxDBClient
 from datetime import datetime
 import urllib3
 import yaml
+from urllib.parse import urlparse, urlunparse
+
+INFLUX_IP_HOST = "138.100.82.178"
+INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
+
+
+def normalize_influx_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.hostname != INFLUX_IP_HOST:
+        return url
+    netloc = INFLUX_CERT_HOST
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def influx_wallclock_z(value) -> str:
+    ts = pd.to_datetime(value)
+    if ts.tzinfo is not None:
+        ts = ts.tz_localize(None)
+    text = ts.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    return text.replace('.000000Z', 'Z')
 
 # Desactiva las advertencias de SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -26,7 +48,7 @@ class cInfluxDB:
         self.bucket = config['influxdb']['bucket']
         self.org = config['influxdb']['org']
         self.token = config['influxdb']['token']
-        self.url = config['influxdb']['url']
+        self.url = normalize_influx_url(config['influxdb']['url'])
 
         # Initialises the InfluxDB client
         self.client = InfluxDBClient(url=self.url, token=self.token, org=self.org, \
@@ -54,8 +76,8 @@ class cInfluxDB:
         :return: DataFrame with the metrics pivoted on columns, ordered by _time descending.
         :rtype: pd.DataFrame
         """
-        from_date_str = from_date.strftime('%Y-%m-%dT%H:%M:%SZ')  # UTC con 'Z'
-        to_date_str = to_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+        from_date_str = influx_wallclock_z(from_date)
+        to_date_str = influx_wallclock_z(to_date)
 
         # Default metrics
         if metrics is None:
@@ -134,8 +156,8 @@ class cInfluxDB:
         if not qtok or not pie:
             raise ValueError("Los argumentos 'qtok' y 'pie' son obligatorios para esta consulta.")
 
-        from_date_str = from_date.strftime('%Y-%m-%dT%H:%M:%SZ')
-        to_date_str = to_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+        from_date_str = influx_wallclock_z(from_date)
+        to_date_str = influx_wallclock_z(to_date)
 
         # Default metrics
         if metrics is None:
@@ -200,7 +222,7 @@ class cInfluxDB:
     def show_raw_sample(self, from_date, to_date, qtok, pie):
         query = f'''
         from(bucket: "{self.bucket}")
-        |> range(start: {from_date.strftime('%Y-%m-%dT%H:%M:%SZ')}, stop: {to_date.strftime('%Y-%m-%dT%H:%M:%SZ')})
+        |> range(start: {influx_wallclock_z(from_date)}, stop: {influx_wallclock_z(to_date)})
         |> filter(fn: (r) => r._measurement == "{self.measurement}")
         |> filter(fn: (r) => r["CodeID"] == "{qtok}" and r["Foot"] == "{pie}" and r["type"] == "SCKS")
         |> limit(n: 5)

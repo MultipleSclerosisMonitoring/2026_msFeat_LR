@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from msTools.data_manager import DataManager
 from msTools import i18n
-from msTools.timeutils import ensure_utc
+from msTools.timeutils import influx_wallclock_z
 from msGait.models import EffectiveMovement
 
 from scipy.signal import welch
@@ -116,8 +116,8 @@ class MovementDetector:
                 print(i18n._("PGSQL-QRY-GEN-ERR").format(e=e))
             return pd.DataFrame()
 
-        start_time = ensure_utc(start_time).isoformat().replace("+00:00", "Z")
-        end_time = ensure_utc(end_time).isoformat().replace("+00:00", "Z")
+        start_time = influx_wallclock_z(start_time)
+        end_time = influx_wallclock_z(end_time)
 
         query = f'''
         from(bucket: "{self.data_manager.bucket}")
@@ -296,8 +296,8 @@ class MovementDetector:
                 print(i18n._("MSG_TMP_IDS").format(id=row.CodeID,ref=row.codeid_id,
                                 tstart=row.start_time,tend=row.end_time))
             try:
-                start = row.start_time.replace(tzinfo=timezone.utc) # ensure_utc(row.start_time)
-                end = row.end_time.replace(tzinfo=timezone.utc)    # ensure_utc(row.end_time)
+                start = row.start_time.replace(tzinfo=timezone.utc)
+                end = row.end_time.replace(tzinfo=timezone.utc)
             except Exception:
                 if self.verbose:
                     print(i18n._("MVNT-TS-NOV").format(row=row))
@@ -471,4 +471,3 @@ class MovementDetector:
             self.data_manager.store_data(table_name, df, verbose)
         except Exception as e:
             print(i18n._("PGSQL-INS-TAB-ERR").format(fable_name=table_name, e=e))
-

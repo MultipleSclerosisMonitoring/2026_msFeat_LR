@@ -4,8 +4,37 @@ import urllib3
 import os
 from typing import Dict, Any
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 from pydantic import BaseModel, Field
 from influxdb_client import InfluxDBClient
+
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'pkgs'))
+from msTools.timeutils import influx_wallclock_z
+
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+INFLUX_IP_HOST = "138.100.82.178"
+INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
+
+
+def normalize_influx_url(url: str) -> str:
+    """Use the DNS name covered by the TLS certificate when the old IP is configured."""
+    parsed = urlparse(url)
+    if parsed.hostname != INFLUX_IP_HOST:
+        return url
+
+    netloc = INFLUX_CERT_HOST
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def madrid_wallclock_as_influx_z(value: str) -> str:
+    """Influx stores Madrid wall-clock timestamps as if they were UTC."""
+    return influx_wallclock_z(value)
 
 
 class InfluxConfig(BaseModel):
@@ -24,6 +53,7 @@ class InfluxConfig(BaseModel):
     token: str = Field(..., description="Token de acceso")
     org: str = Field(..., description="Nombre de la organización")
     bucket: str = Field(..., description="Bucket de datos")
+    timeout: int | None = Field(default=None, description="Timeout del cliente InfluxDB en ms")
 
 class GaitDataExtractor:
     """Clase para la extracción masiva y tipada de datos biomecánicos.
@@ -63,12 +93,13 @@ class GaitDataExtractor:
         raw_config = self._load_config(config_path)
 
         validated_config = InfluxConfig(**raw_config['influxdb'])
+        influx_url = normalize_influx_url(validated_config.url)
         # Cliente InfluxDB encapsulado (Atributo privado)
         self._client = InfluxDBClient(
-            url=validated_config.url,
+            url=influx_url,
             token=validated_config.token,
             org=validated_config.org,
-            timeout=30000  ,
+            timeout=validated_config.timeout or 30000,
             verify_ssl=False,
             ssl_ca_cert=None
         )
@@ -135,9 +166,9 @@ class GaitDataExtractor:
         """
         p_id: str = str(row['codeid'])
         
-        # Conversión de fechas a formato ISO 8601 para InfluxDB
-        start_iso = pd.to_datetime(row['d_from']).tz_convert('UTC').strftime('%Y-%m-%dT%H:%M:%SZ')
-        stop_iso = pd.to_datetime(row['d_until']).tz_convert('UTC').strftime('%Y-%m-%dT%H:%M:%SZ')
+        # Influx contiene hora civil de Madrid serializada como UTC.
+        start_iso = madrid_wallclock_as_influx_z(row['d_from'])
+        stop_iso = madrid_wallclock_as_influx_z(row['d_until'])
         
         query = f'''
         from(bucket: "{self._bucket}")
