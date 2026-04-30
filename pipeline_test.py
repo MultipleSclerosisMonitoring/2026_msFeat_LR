@@ -8,13 +8,39 @@ import pandas as pd
 import numpy as np
 import logging
 import yaml
+import urllib3
+from urllib.parse import urlparse, urlunparse
 from influxdb_client import InfluxDBClient
 from GaitMetricsCalculator import GaitMetricsCalculator
 from msTools import i18n
+from msTools.timeutils import influx_wallclock_z
 
 # Configuración del Logger
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger("msGait.Pipeline")
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+INFLUX_IP_HOST = "138.100.82.178"
+INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
+
+
+def normalize_influx_url(url: str) -> str:
+    """Use the DNS name covered by the TLS certificate when the old IP is configured."""
+    parsed = urlparse(url)
+    if parsed.hostname != INFLUX_IP_HOST:
+        return url
+
+    netloc = INFLUX_CERT_HOST
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
+
+
+def madrid_wallclock_as_influx_z(value: str) -> str:
+    """Influx stores Madrid wall-clock timestamps as if they were UTC."""
+    return influx_wallclock_z(value)
+
 
 class GaitPipeline:
     def __init__(self, config_path: str = "InfluxDBms/.config_db.yaml"):
@@ -29,13 +55,15 @@ class GaitPipeline:
             config = yaml.safe_load(file)
             
         inf_cfg = config["influxdb"]
+        influx_url = normalize_influx_url(inf_cfg["url"])
         
         # 2. Conectar Cliente InfluxDB nativo
         self.client = InfluxDBClient(
-            url=inf_cfg["url"],
+            url=influx_url,
             token=inf_cfg["token"],
             org=inf_cfg["org"],
-            timeout=inf_cfg.get("timeout", 30000)
+            timeout=inf_cfg.get("timeout") or 30000,
+            verify_ssl=False,
         )
         self.bucket = inf_cfg["bucket"]
         
@@ -87,9 +115,9 @@ class GaitPipeline:
             if cid not in pacientes_dict:
                 pacientes_dict[cid] = {"CodeID": cid}
             
-            # Formateo estricto ISO 8601 (Requisito de Flux)
-            start_time = row['d_from'].replace(" ", "T").split(".")[0] + "Z"
-            end_time = row['d_until'].replace(" ", "T").split(".")[0] + "Z"
+            # Influx contiene hora civil de Madrid serializada como UTC.
+            start_time = madrid_wallclock_as_influx_z(row['d_from'])
+            end_time = madrid_wallclock_as_influx_z(row['d_until'])
             
             logger.info(f"[{cid}] - Ingestando {test_type} desde InfluxDB...")
             

@@ -4,12 +4,30 @@ import psycopg2
 import yaml
 from msTools.models import CodeID, ActivityLeg, ActivityAll
 from msTools import i18n
-from msTools.timeutils import ensure_utc
+from msTools.timeutils import ensure_utc, influx_wallclock_z
 from msGait.models import EffectiveMovement, ActivitySegment
 from pydantic import ValidationError
 from typing import List, Dict, Optional, Tuple
 from psycopg2 import sql
 import datetime
+import urllib3
+from urllib.parse import urlparse, urlunparse
+
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+INFLUX_IP_HOST = "138.100.82.178"
+INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
+
+
+def normalize_influx_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.hostname != INFLUX_IP_HOST:
+        return url
+    netloc = INFLUX_CERT_HOST
+    if parsed.port:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunparse(parsed._replace(netloc=netloc))
 
 
 class DataManager:
@@ -28,10 +46,11 @@ class DataManager:
 
         # Configure InfluxDB client
         self.influxdb_client = InfluxDBClient(
-            url=self.config["influxdb"]["url"],
+            url=normalize_influx_url(self.config["influxdb"]["url"]),
             token=self.config["influxdb"]["token"],
             org=self.config["influxdb"]["org"],
-            timeout=self.config["influxdb"]["timeout"]
+            timeout=self.config["influxdb"].get("timeout") or 30000,
+            verify_ssl=False,
         )
         self.bucket: str = self.config["influxdb"]["bucket"]
         self.measurement: str = self.config['influxdb']['measurement']
@@ -151,13 +170,9 @@ class DataManager:
         :rtype: list[str]
         """
         try:
-            # 1) Normalize both endpoints to UTC
-            start = ensure_utc(start_datetime)
-            end   = ensure_utc(end_datetime)
-
-            # 2) Flux wants RFC3339 without "+00:00"
-            start_iso = start.isoformat().replace("+00:00", "Z")
-            end_iso   = end.isoformat()  .replace("+00:00", "Z")
+            # Influx contains experiment-table wall-clock timestamps serialized as UTC.
+            start_iso = influx_wallclock_z(start_datetime)
+            end_iso = influx_wallclock_z(end_datetime)
 
             query = f'''
             from(bucket: "{self.bucket}")

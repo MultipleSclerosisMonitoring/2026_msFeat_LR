@@ -2,6 +2,10 @@
 #Automatiza la extraccion de series temporales de alta frecuencia desde influxDB
 import pandas as pd
 import subprocess
+import sys
+
+sys.path.append("pkgs")
+from msTools.timeutils import influx_wallclock_z
 
 #1. Cargar el archivo de marcas de tiempo
 test_df = pd.read_csv('tests.csv')
@@ -11,8 +15,8 @@ tests_6mwt = test_df[test_df['t_code'] == '6MWT']
 
 for index, row in tests_6mwt.iterrows():
     patient_id = row['codeid']
-    start_time = row['d_from'].replace(" ", "T").split(".")[0] + "Z"
-    end_time = row['d_until'].replace(" ", "T").split(".")[0] + "Z"
+    start_time = influx_wallclock_z(row['d_from'])
+    end_time = influx_wallclock_z(row['d_until'])
 
     #Crear nombre archivo 
     output_name = f"test_InfluxDB/out/EM_{patient_id}_6MWT_{index}.xlsx"
