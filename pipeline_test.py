@@ -169,6 +169,6 @@ class GaitPipeline:
         logger.info("Pipeline Finalizado: Excel generado (DatasetMaestro.xlsx).")
 
 if __name__ == "__main__":
-    # ¡Asegúrate de que esta ruta apunta al archivo YAML que SÍ tiene tu URL real de InfluxDB!
+    # Asegurarse de que esta ruta apunta al archivo YAML que SÍ tiene tu URL real de InfluxDB
     pipeline = GaitPipeline("InfluxDBms/.config_db.yaml") 
     pipeline.run_from_csv("tests.csv")
