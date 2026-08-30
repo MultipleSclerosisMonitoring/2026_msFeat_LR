@@ -1,6 +1,6 @@
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), "pkgs")) # Parche de rutas
+sys.path.append(os.path.join(os.path.dirname(__file__), "pkgs")) # Parche de rutas (directorio de paquetes)
 
 
 
@@ -13,6 +13,7 @@ from urllib.parse import urlparse, urlunparse
 from influxdb_client import InfluxDBClient
 from GaitMetricsCalculator import GaitMetricsCalculator
 from msTools import i18n
+from msTools.i18n import _
 from msTools.timeutils import influx_wallclock_z
 
 # Configuración del Logger
@@ -109,8 +110,8 @@ class GaitPipeline:
         pacientes_dict = {}
 
         for index, row in tests_df.iterrows():
-            cid = row['codeid']
-            test_type = row['t_code'] 
+            cid = str(row['codeid']).strip()
+            test_type = str(row['t_code']).strip()
             
             if cid not in pacientes_dict:
                 pacientes_dict[cid] = {"CodeID": cid}
@@ -132,6 +133,26 @@ class GaitPipeline:
             duracion_total = (pd.to_datetime(end_time) - pd.to_datetime(start_time)).total_seconds()
             pacientes_dict[cid][f"{test_type}_duracion_seg"] = round(duracion_total, 2)
 
+            # --- Persistencia en HDF5 (Almacén Jerárquico de Señales) ---
+            try:
+                os.makedirs("data/raw", exist_ok=True)
+                h5_path = "data/raw/gait_study_data.h5"
+                
+                # Preparamos el DataFrame para compatibilidad con PyTables
+                df_export = raw_df.copy()
+                for col in df_export.columns:
+                    if df_export[col].dtype == 'object':
+                        df_export[col] = df_export[col].astype(str)
+                
+                # Exportación con estructura jerárquica: /paciente/test/intento
+                hdf_key = f"p_{cid}/{test_type}/trial_{index}"
+                df_export.to_hdf(h5_path, key=hdf_key, mode='a', format='table', min_itemsize=100)
+                logger.debug(_("INFO_HDF5_SAVED: Señales serializadas en HDF5 con clave {k}").format(k=hdf_key))
+                
+            except Exception as e:
+                logger.warning(_("WARN_HDF5_SAVE_FAILED: Fallo al serializar en HDF5 para paciente {p} - Motivo: {err}").format(p=cid, err=e))
+
+
             # --- BLOQUE 2 y 3: ANÁLISIS ---
             # Las etiquetas en InfluxDB suelen venir como columnas tras el 'pivot'. 
             # Aseguramos que existe la columna 'foot' o 'Foot'
@@ -142,7 +163,7 @@ class GaitPipeline:
                 continue
 
             for side in ["Left", "Right"]:
-                df_side = raw_df[raw_df[col_foot] == side].copy()
+                df_side = raw_df[raw_df[col_foot].astype(str).str.strip().str.capitalize() == side].copy()
                 
                 if df_side.empty:
                     continue
@@ -168,11 +189,51 @@ class GaitPipeline:
                         f"{prefix}decaimiento_prc": decay_res.get("6mwt_decaimiento", 0)
                     })
 
-    # --- EXPORTACIÓN BLINDADA ---
+                # --- Cálculo de Features Geométricas (Zancada) ---
+                stride_res = self.calculator.calcular_longitud_zancada(df_side)
+                
+                pacientes_dict[cid].update({
+                    f"{test_type}_{side}_stride_length_cm": stride_res.get("stride_length_cm", 0.0)
+                })
+                
+                # Bloque 3 de QA: Registro condicional (Nivel DEBUG)
+                if stride_res.get("status") == "WARNING":
+                    logger.debug(_("DEBUG_GEOMETRY_WARN: Excursión geométrica inusualmente baja detectada en paciente {p} ({s})").format(p=cid, s=side))
+
+
+                # --- Cálculo de Features Geométricas (Altura de Zancada / Foot Clearance) ---
+                height_res = self.calculator.calcular_altura_zancada(df_side)
+                
+                pacientes_dict[cid].update({
+                    f"{test_type}_{side}_step_height_cm": height_res.get("step_height_cm", 0.0)
+                })
+                
+                # Bloque 3 de QA: Log de advertencia clínica (Nivel DEBUG multilingüe)
+                if height_res.get("status") == "WARNING":
+                    logger.debug(_("DEBUG_GEOMETRY_WARN: Altura de zancada atípica (posible arrastre o foot drop) en paciente {p} ({s})").format(p=cid, s=side))
+
+           # --- Cálculo de Asimetría Bilateral (Symmetry Index) ---
+            cad_l = pacientes_dict[cid].get(f"{test_type}_Left_cadencia", 0.0)
+            cad_r = pacientes_dict[cid].get(f"{test_type}_Right_cadencia", 0.0)
+            
+            if cad_l > 0 and cad_r > 0:
+                # Calculamos la diferencia porcentual absoluta entre ambas extremidades
+                symmetry_index = (abs(cad_l - cad_r) / (0.5 * (cad_l + cad_r))) * 100
+            else:
+                # Si falta una pierna, la asimetría no es calculable de forma segura
+                symmetry_index = 0.0
+                
+            pacientes_dict[cid][f"{test_type}_symmetry_index"] = round(symmetry_index, 2)
+            
+            if symmetry_index > 20.0:
+                logger.debug(_("DEBUG_ASYMMETRY_DETECTED: Índice de asimetría alto detectado en paciente {p} ({si}%)").format(p=cid, si=round(symmetry_index, 2)))
+
+        # --- EXPORTACIÓN BLINDADA ---
         if not pacientes_dict:
             logger.error("No se generaron datos para ningún paciente. Revisa la conexión a InfluxDB.")
             return
 
+        # Convertimos el diccionario acumulativo directamente en el DataFrame final
         dataset_aplanado = list(pacientes_dict.values())
         df_final = pd.DataFrame(dataset_aplanado).fillna("N/A")
 
@@ -183,17 +244,17 @@ class GaitPipeline:
             # 2. Calcular estadísticas de forma segura
             # Convertimos a numérico: lo que sea texto puro (como CodeID) se convertirá en NaN y será ignorado
             df_numeric = df_final.apply(lambda x: pd.to_numeric(x, errors='coerce'))
-            
+                
             # Eliminamos las columnas que sean 100% texto/NaN
             df_numeric = df_numeric.dropna(axis=1, how='all')
-            
+                
             # Solo generamos estadísticas si realmente hay datos numéricos que calcular
             if not df_numeric.empty:
                 stats = df_numeric.describe().loc[['mean', '50%', 'std']]
                 stats.to_excel(writer, sheet_name="Estadisticas_Globales")
             else:
                 logger.warning("No hay suficientes datos numéricos para calcular las Estadísticas Globales.")
-            
+                
         logger.info("Pipeline Finalizado: Excel generado (DatasetMaestro.xlsx).")
 
 if __name__ == "__main__":

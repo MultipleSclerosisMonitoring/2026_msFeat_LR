@@ -1,4 +1,4 @@
-#Graficar datos de los sensores antes de aplicar los filrtos matemáticos 
+#Graficar datos de los sensores antes de aplicar los filtros matemáticos 
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,7 +18,7 @@ CUTOFF = 5.0
 GIRO_THRESHOLD = 50.0 # Grados/s. Si supera esto, consideramos que está girando
 
 #Cargar uno de los archivos de 6 minutos obtenidos mediantes el batch extractor
-ruta = r"C:\Users\teres\TFG\2026_msFeat_TEA\test_InfluxDB\out\EM_01912299X-118_6MWT_9.xlsx"
+ruta = r"C:\Users\teres\TFG\2026_msFeat_TEA\test_InfluxDB\out\EM_01912299X-118_6MWT_9.xlsx" #ERROR: no encuentra este archivo ¿¿esto de donde viene??
 try:
     df = pd.read_excel(ruta)
 
