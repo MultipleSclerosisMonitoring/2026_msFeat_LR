@@ -2,7 +2,10 @@ import pandas as pd
 from influxdb_client import InfluxDBClient
 from datetime import datetime
 import urllib3
-import yaml
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pkgs"))
+from msConfig import load_config
 from urllib.parse import urlparse, urlunparse
 
 INFLUX_IP_HOST = "138.100.82.178"
@@ -30,7 +33,7 @@ def influx_wallclock_z(value) -> str:
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class cInfluxDB:
-    def __init__(self, config_path: str, timeout: int = 500_000):
+    def __init__(self, config_path: str, timeout: int | None = None):
         """
         Initializes the connection to InfluxDB using a YAML configuration file.
 
@@ -41,8 +44,7 @@ class cInfluxDB:
 
         """
         # Load the configuration from the YAML file
-        with open(config_path, 'r') as file:
-            config = yaml.safe_load(file)
+        config = load_config(config_path)
 
         # Extract the necessary values
         self.bucket = config['influxdb']['bucket']
@@ -52,10 +54,8 @@ class cInfluxDB:
 
         # Initialises the InfluxDB client
         self.client = InfluxDBClient(url=self.url, token=self.token, org=self.org, \
-                                     verify_ssl=False, timeout=timeout)
-        self.measurement = self.bucket.split("/")[0] if '/' in self.bucket else \
-                           self.bucket
-    
+                                     verify_ssl=config["influxdb"]["verify_ssl"], timeout=timeout if timeout is not None else config["influxdb"]["timeout"])
+        self.measurement = config["influxdb"]["measurement"]
 
     def query_data(self, from_date: datetime, to_date: datetime, qtok: str, pie: str, 
                    metrics=None) -> pd.DataFrame:

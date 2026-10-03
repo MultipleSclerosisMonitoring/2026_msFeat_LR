@@ -9,9 +9,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # ---------------------------------------------------------
 # CONFIGURACIÓN
 # ---------------------------------------------------------
-ARCHIVO_INPUT = 'data/raw/gait_study_data.h5'
-ARCHIVO_OUTPUT = 'INFORME_CLINICO_FINAL.xlsx'
-
+# Configuration is loaded inside main(), so importing analysis has no I/O.
 # ---------------------------------------------------------
 # FUNCIONES DE ANÁLISIS (MOTORES DE CÁLCULO)
 # ---------------------------------------------------------
@@ -89,6 +87,17 @@ def calcular_fases(df):
 # BLOQUE PRINCIPAL (MAIN LOOP)
 # ---------------------------------------------------------
 def main():
+    import argparse
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent / 'pkgs'))
+    from msConfig import load_config
+    parser = argparse.ArgumentParser(description='Analizar el HDF5 y generar informe')
+    parser.add_argument('--config', default=None)
+    args = parser.parse_args()
+    config = load_config(args.config)
+    ARCHIVO_INPUT = config.get('paths', {}).get('h5_path', 'data/raw/gait_study_data.h5')
+    ARCHIVO_OUTPUT = config.get('paths', {}).get('output_report', 'INFORME_CLINICO_FINAL.xlsx')
     if not os.path.exists(ARCHIVO_INPUT):
         print("Error: No se encuentra el archivo HDF5.")
         return
@@ -148,6 +157,7 @@ def main():
     # ---------------------------------------------------------
     if resultados_globales:
         df_final = pd.DataFrame(resultados_globales)
+        os.makedirs(os.path.dirname(os.path.abspath(ARCHIVO_OUTPUT)), exist_ok=True)
         df_final.to_excel(ARCHIVO_OUTPUT, index=False)
         print(f"\nProceso terminado")
         print(f"Informe guardado en: {os.path.abspath(ARCHIVO_OUTPUT)}")

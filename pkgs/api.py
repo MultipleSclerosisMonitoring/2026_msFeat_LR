@@ -28,14 +28,14 @@ def _startup():
     Adjust routes/params if your MovementDetector requires a different signature.
     """
     global _dm, _detector
-    _dm = DataManager(config_path=".config.yaml")
+    _dm = DataManager(config_path=None)
 
     now = datetime.utcnow()
     fstart = (now - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
     fend   = now.strftime("%Y-%m-%d %H:%M:%S")
 
     _detector = MovementDetector(
-        config_file=".config.yaml",
+        config_file=None,
         sampling_rate=50,
         sect="movement",
         fstart=fstart,
