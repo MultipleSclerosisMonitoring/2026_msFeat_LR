@@ -1,5 +1,4 @@
 import pandas as pd
-import yaml
 import urllib3
 import os
 from typing import Dict, Any
@@ -12,6 +11,7 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'pkgs'))
 from msTools.timeutils import influx_wallclock_z
+from msConfig import load_config
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -66,64 +66,27 @@ class GaitDataExtractor:
         __client (InfluxDBClient): Cliente de conexión a la base de datos.
         __bucket (str): Nombre del bucket origen de los datos.
     """
-    def __init__(self, config_file: str = "config_db.yaml", output_folder: str = 'data/raw') -> None:
-        """Inicializa el extractor con validación de rutas y configuración.
-
-        Args:
-            config_file (str): Nombre del archivo YAML de configuración.
-            output_folder (str): Carpeta relativa donde se guardarán los resultados.
-
-        Raises:
-            FileNotFoundError: Si no se encuentra el archivo de configuración.
-            ValidationError: Si el archivo YAML no cumple con el esquema InfluxConfig.
-        """
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        
-        # Atributo privado: Directorio de salida configurable
-        self._out_dir = os.path.join(base_path, '..', '..', output_folder)
-        os.makedirs(self._out_dir, exist_ok=True)
-
-        # DEFINIR LA RUTA DEL ARCHIVO HDF5
-        # Este será el único archivo que contendrá TODOS los datos organizados
-        self._h5_database: str = os.path.join(self._out_dir, "gait_study_data.h5")
-
-
-        # Carga de configuración privada
-        config_path = os.path.join(base_path, '..','..', "InfluxDBms", config_file)
-        raw_config = self._load_config(config_path)
-
-        validated_config = InfluxConfig(**raw_config['influxdb'])
-        influx_url = normalize_influx_url(validated_config.url)
-        # Cliente InfluxDB encapsulado (Atributo privado)
+    def __init__(self, config_file: str | None = None, output_folder: str | None = None) -> None:
+        self.config = self._load_config(config_file)
+        root = Path(__file__).resolve().parents[2]
+        folder = output_folder or self.config.get('paths', {}).get('output_folder', str(root / 'data/raw'))
+        self._out_dir = str(Path(folder).resolve())
+        self._h5_database = self.config.get('paths', {}).get('h5_path', str(Path(self._out_dir) / 'gait_study_data.h5'))
+        if output_folder is not None:
+            self._h5_database = str(Path(self._out_dir) / 'gait_study_data.h5')
+        Path(self._h5_database).parent.mkdir(parents=True, exist_ok=True)
+        inf = self.config['influxdb']
         self._client = InfluxDBClient(
-            url=influx_url,
-            token=validated_config.token,
-            org=validated_config.org,
-            timeout=validated_config.timeout or 30000,
-            verify_ssl=False,
-            ssl_ca_cert=None
+            url=normalize_influx_url(inf['url']), token=inf['token'], org=inf['org'],
+            timeout=inf['timeout'], verify_ssl=inf['verify_ssl'],
         )
+        self._bucket = inf['bucket']
+        self._measurement = inf['measurement']
 
-        self._bucket = validated_config.bucket
+    def _load_config(self, config_path: str | None) -> Dict[str, Any]:
+        return load_config(config_path)
 
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """Carga y parsea el archivo de configuración YAML.
-
-        Args:
-            config_path (str): Ruta absoluta al archivo YAML.
-
-        Returns:
-            Dict[str, Any]: Contenido del archivo YAML como diccionario.
-
-        Raises:
-            FileNotFoundError: Si la ruta especificada no existe.
-        """
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Configuración no encontrada en: {config_path}")
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f)
-
-    def run_batch_extraction(self, csv_path: str = 'tests.csv', test_type: str = '6MWT') -> None:
+    def run_batch_extraction(self, csv_path: str | None = None, test_type: str | None = None) -> None:
         """Ejecuta el proceso de extracción para todos los pacientes que coincidan con el test.
 
         Args:
@@ -134,7 +97,8 @@ class GaitDataExtractor:
             None
         """
         base_path = os.path.dirname(os.path.abspath(__file__))
-        full_csv_path = os.path.join(base_path, '..', '..', csv_path)
+        full_csv_path = csv_path or self.config.get('paths', {}).get('registry_csv', os.path.join(base_path, '..', '..', 'tests.csv'))
+        test_type = test_type or self.config['batch']['test_type']
         
         if not os.path.exists(full_csv_path):
             print(f"ERROR: No se encuentra el registro {full_csv_path}")
@@ -173,7 +137,7 @@ class GaitDataExtractor:
         query = f'''
         from(bucket: "{self._bucket}")
           |> range(start: {start_iso}, stop: {stop_iso})
-          |> filter(fn: (r) => r["_measurement"] == "Gait")
+          |> filter(fn: (r) => r["_measurement"] == "{self._measurement}")
           |> filter(fn: (r) => r["CodeID"] == "{p_id}")
           |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
           |> drop(columns: ["_start", "_stop", "_measurement", "result", "table", "CodeID", 

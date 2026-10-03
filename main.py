@@ -1,54 +1,35 @@
-import os
+"""Extract curated test windows using the shared YAML/.env configuration."""
+import argparse
 import sys
-# Truco para que Python encuentre tus carpetas 'src' sin problemas
-sys.path.append(os.path.abspath("src"))
+from pathlib import Path
 
-from gait_analysis.extractor import GaitDataExtractor
-import pandas as pd
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
+sys.path.insert(0, str(Path(__file__).resolve().parent / 'pkgs'))
+from msConfig import load_config, ConfigError
 
-# ---------------------------------------------------------
-# CONFIGURACIÓN
-# ---------------------------------------------------------
-ARCHIVO_CSV = 'tests.csv'   # El nombre de tu archivo
-TIPO_TEST = '6MWT'          # Lo que pusiste en la columna t_code
-CARPETA_SALIDA = 'data/raw' # Donde guardará el HDF5
 
-print("Iniciando el Motor de Extracción...")
-
-# 1. Instanciamos el Extractor Profesional
-try:
-    extractor = GaitDataExtractor(config_file=".config_db.yaml", output_folder=CARPETA_SALIDA)
-    
-    # 2. Ejecutamos la extracción masiva leyendo tu CSV
-    extractor.run_batch_extraction(csv_path=ARCHIVO_CSV, test_type=TIPO_TEST)
-    
-    # 3. Cerramos conexión
-    extractor.close()
-    print("\nProceso finalizado. Datos guardados en formato HDF5.")
-
-except Exception as e:
-    print(f"\nERROR CRÍTICO: {e}")
-    print("Consejo: Revisa que 'config_db.yaml' esté en la carpeta InfluxDBms y tu CSV en la raíz.")
-
-# ---------------------------------------------------------
-# VERIFICACIÓN RÁPIDA (Leemos lo que acabamos de guardar)
-# ---------------------------------------------------------
-archivo_h5 = os.path.join(CARPETA_SALIDA, "gait_study_data.h5")
-
-if os.path.exists(archivo_h5):
-    print(f"\nAbriendo archivo de datos: {archivo_h5}")
+def main():
+    parser = argparse.ArgumentParser(description='Extracción InfluxDB → HDF5')
+    parser.add_argument('--config', default=None, help='YAML; por defecto config/config.yaml')
+    parser.add_argument('--csv', default=None, help='Sustituye paths.registry_csv')
+    parser.add_argument('--test-type', default=None, help='Sustituye batch.test_type')
+    parser.add_argument('--output-folder', default=None, help='Sustituye salida y h5_path')
+    parser.add_argument('--check-config', action='store_true', help='Validar YAML/.env sin acceder a bases de datos')
+    args = parser.parse_args()
+    if args.check_config:
+        load_config(args.config)
+        print('Configuración válida; no se han realizado conexiones.')
+        return
+    from gait_analysis.extractor import GaitDataExtractor
+    extractor = GaitDataExtractor(args.config, args.output_folder)
     try:
-        with pd.HDFStore(archivo_h5, mode='r') as store:
-            claves = store.keys()
-            print(f"   Pacientes encontrados en el archivo: {len(claves)}")
-            for k in claves:
-                print(f"   - {k}")
-                
-            if len(claves) > 0:
-                df = store.get(claves[0])
-                print(f"\nPrimer paciente cargado con {len(df)} filas.")
-                print(df.head())
-    except Exception as e:
-        print(f"Error leyendo el HDF5: {e}")
-else:
-    print("No se generó el archivo .h5 (revisa si el CSV tenía las fechas correctas).")
+        extractor.run_batch_extraction(args.csv, args.test_type)
+    finally:
+        extractor.close()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except ConfigError as error:
+        sys.exit(str(error))

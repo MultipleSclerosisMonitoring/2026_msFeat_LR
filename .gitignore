@@ -210,3 +210,6 @@ data/raw/gait_study_data.h5
 
 # Token de acceso
 .config_db.yaml
+
+# Local configuration (the example is versioned)
+/config/config.yaml
