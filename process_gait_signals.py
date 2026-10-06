@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks 
 
-#Funcion del Filtro Butterworth
+#Función del Filtro Butterworth
 def butter_lowpass_filter(data, cutoff, fs, order = 4):
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
@@ -18,7 +18,7 @@ CUTOFF = 5.0
 GIRO_THRESHOLD = 50.0 # Grados/s. Si supera esto, consideramos que está girando
 
 #Cargar uno de los archivos de 6 minutos obtenidos mediantes el batch extractor
-ruta = r"C:\Users\teres\TFG\2026_msFeat_TEA\test_InfluxDB\out\EM_01912299X-118_6MWT_9.xlsx" #ERROR: no encuentra este archivo ¿¿esto de donde viene??
+ruta = r"C:\Users\teres\TFG\2026_msFeat_TEA\test_InfluxDB\out\EM_01912299X-118_6MWT_9.xlsx"
 try:
     df = pd.read_excel(ruta)
 

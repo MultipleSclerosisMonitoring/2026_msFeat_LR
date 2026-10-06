@@ -163,6 +163,49 @@ class GaitVisualizer:
             plt.savefig(out_file, dpi=300)
             plt.close()
 
+
+    def plot_dynamic_scatter(self) -> None:
+        """Genera gráficos de dispersión (Scatter) dinámicos para cada test.
+
+        Visualiza la relación entre la cadencia (eje X) y el porcentaje de la fase 
+        de apoyo (eje Y). Aplica un filtro de coherencia biomecánica para descartar
+        artefactos donde la cadencia sea 0.
+        """
+        if self.df is None:
+            return
+
+        out_subfolder = os.path.join(self.out_dir, "dispersion")
+        os.makedirs(out_subfolder, exist_ok=True)
+
+        tests_detectados = set(c.split('_')[0] for c in self.df.columns if '_' in c and c != "CodeID")
+
+        for test in tests_detectados:
+            col_x = f"{test}_Left_cadencia"
+            col_y = f"{test}_Left_apoyo_prc"
+            
+            if col_x in self.df.columns and col_y in self.df.columns:
+                df_test = self.df[[col_x, col_y]].dropna()
+                
+                # FILTRO BIOMECÁNICO: Descartar artefactos de 0 pasos
+                # Una cadencia menor a 5 PPM no representa un ciclo de marcha real
+                df_test = df_test[df_test[col_x] > 5.0]
+                
+                # Filtro QA: Mínimo 3 pacientes válidos tras la limpieza
+                if len(df_test) < 3:
+                    logger.debug(_("DEBUG_PLOT_SKIP: Omitiendo Scatter para {t} por falta de datos coherentes").format(t=test))
+                    continue
+
+                plt.figure(figsize=(8, 6))
+                sns.scatterplot(data=df_test, x=col_x, y=col_y, s=100, alpha=0.7, color="teal")
+                plt.title(_("Correlación: Velocidad vs Fase de Apoyo ({t})").format(t=test))
+                plt.xlabel(_("Cadencia Izquierda (PPM)"))
+                plt.ylabel(_("Porcentaje Fase de Apoyo (%)"))
+                
+                out_file = os.path.join(out_subfolder, f"scatter_{test}.png")
+                plt.tight_layout()
+                plt.savefig(out_file, dpi=300)
+                plt.close()
+
     def generate_all_reports(self) -> None:
         """Orquesta la extracción masiva de gráficos por familias."""
         logger.info(_("INFO_START_PLOTTING: Generando batería dinámica de gráficas..."))
@@ -170,6 +213,7 @@ class GaitVisualizer:
             self.plot_dynamic_boxplots()
             self.plot_dynamic_kde_asymmetry()
             self.plot_dynamic_correlation_matrices()
+            self.plot_dynamic_scatter()
             logger.info(_("INFO_END_PLOTTING: Proceso finalizado. Gráficas estructuradas por carpetas."))
 
 if __name__ == "__main__":
