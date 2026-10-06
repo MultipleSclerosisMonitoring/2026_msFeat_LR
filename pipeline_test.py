@@ -7,11 +7,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "pkgs")) # Parche de rut
 import pandas as pd
 import numpy as np
 import logging
-import yaml
 import urllib3
 from urllib.parse import urlparse, urlunparse
 from influxdb_client import InfluxDBClient
 from GaitMetricsCalculator import GaitMetricsCalculator
+from msConfig import load_config
 from msTools import i18n
 from msTools.i18n import _
 from msTools.timeutils import influx_wallclock_z
@@ -44,17 +44,12 @@ def madrid_wallclock_as_influx_z(value: str) -> str:
 
 
 class GaitPipeline:
-    def __init__(self, config_path: str = "InfluxDBms/.config_db.yaml"):
+    def __init__(self, config_path: str | None = None):
         """
         Inicializa la conexión directa SOLO a InfluxDB, evitando el error de PostgreSQL.
         """
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"No se encuentra el config: {config_path}")
-            
-        # 1. Cargar Configuración Manualmente
-        with open(config_path, "r", encoding="utf-8") as file:
-            config = yaml.safe_load(file)
-            
+        config = load_config(config_path)
+        self.config = config
         inf_cfg = config["influxdb"]
         influx_url = normalize_influx_url(inf_cfg["url"])
         
@@ -64,13 +59,13 @@ class GaitPipeline:
             token=inf_cfg["token"],
             org=inf_cfg["org"],
             timeout=inf_cfg.get("timeout") or 30000,
-            verify_ssl=False,
+            verify_ssl=inf_cfg["verify_ssl"],
         )
         self.bucket = inf_cfg["bucket"]
         
         # Herramientas
         self.calculator = GaitMetricsCalculator()
-        i18n.init_translation("es")
+        i18n.init_translation(config["project"]["language"])
 
     def fetch_data_flux(self, cid: str, start_time: str, end_time: str) -> pd.DataFrame:
         """
@@ -105,7 +100,10 @@ class GaitPipeline:
             logger.error(f"[{cid}] - Error en consulta Flux: {e}")
             return pd.DataFrame()
 
-    def run_from_csv(self, csv_path: str = "tests.csv"):
+    def run_from_csv(self, csv_path: str | None = None):
+        config = getattr(self, "config", {})
+        csv_path = csv_path or config.get("paths", {}).get("registry_csv", "tests.csv")
+        fs = config.get("processing", {}).get("fs", 100)
         tests_df = pd.read_csv(csv_path)
         pacientes_dict = {}
 
@@ -172,7 +170,7 @@ class GaitPipeline:
                 debe_excluir_giros = False if test_type == "TUG" else True
 
                 # Llamada al motor de cálculo
-                cad_res = self.calculator.calcular_cadencia(df_side, excluir_giros=debe_excluir_giros)
+                cad_res = self.calculator.calcular_cadencia(df_side, fs=fs, excluir_giros=debe_excluir_giros)
                 fas_res = self.calculator.calcular_fases(df_side)
 
                 prefix = f"{test_type}_{side}_"
@@ -184,7 +182,7 @@ class GaitPipeline:
                 })
 
                 if test_type == "6MWT":
-                    decay_res = self.calculator.calcular_decaimiento_6mwt(df_side)
+                    decay_res = self.calculator.calcular_decaimiento_6mwt(df_side, fs=fs)
                     pacientes_dict[cid].update({
                         f"{prefix}decaimiento_prc": decay_res.get("6mwt_decaimiento", 0)
                     })
@@ -237,7 +235,9 @@ class GaitPipeline:
         dataset_aplanado = list(pacientes_dict.values())
         df_final = pd.DataFrame(dataset_aplanado).fillna("N/A")
 
-        with pd.ExcelWriter("DatasetMaestro.xlsx") as writer:
+        output = config.get("paths", {}).get("output_dataset", "DatasetMaestro.xlsx")
+        os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
+        with pd.ExcelWriter(output) as writer:
             # 1. Guardar la hoja principal
             df_final.to_excel(writer, sheet_name="Datos_Pacientes", index=False)
             
@@ -254,10 +254,17 @@ class GaitPipeline:
                 stats.to_excel(writer, sheet_name="Estadisticas_Globales")
             else:
                 logger.warning("No hay suficientes datos numéricos para calcular las Estadísticas Globales.")
-                
-        logger.info("Pipeline Finalizado: Excel generado (DatasetMaestro.xlsx).")
+            
+        logger.info("Pipeline finalizado: Excel generado (%s).", output)
 
 if __name__ == "__main__":
-    # Asegurarse de que esta ruta apunta al archivo YAML que SÍ tiene tu URL real de InfluxDB
-    pipeline = GaitPipeline("InfluxDBms/.config_db.yaml") 
-    pipeline.run_from_csv("tests.csv")
+    import argparse
+    parser = argparse.ArgumentParser(description="Pipeline directo InfluxDB → Excel")
+    parser.add_argument('--config', default=None)
+    parser.add_argument('--csv', default=None)
+    args = parser.parse_args()
+    pipeline = GaitPipeline(args.config)
+    try:
+        pipeline.run_from_csv(args.csv)
+    finally:
+        pipeline.client.close()

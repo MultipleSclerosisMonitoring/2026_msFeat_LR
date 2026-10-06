@@ -23,16 +23,32 @@ This project focuses on the automated acquisition and processing of high-frequen
 └── README.md                # This file (Main documentation) 
 ```
 
-# Installation & Setup
-## Create the virtual environment
-python -m venv .venv
+# Instalación y ejecución
 
-## Activate the environment (Windows PowerShell)
-```text
-.\.venv\Scripts\activate
-```
-
-## Dependency Installation
 ```bash
-poetry install
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
 ```
+
+En PowerShell: `.\.venv\Scripts\Activate.ps1`.
+
+La configuración usa YAML para parámetros/rutas y `.env` para credenciales.
+En una instalación nueva:
+
+```bash
+cp config/config.example.yaml config/config.yaml
+cp .env.example .env
+```
+
+Completar las variables de `.env`. En este espacio de trabajo ya se migró el acceso de `pkgs/.config.yaml`; conservar los archivos locales existentes.
+
+```bash
+python main.py --check-config
+python main.py --config config/config.yaml
+python pipeline_test.py --config config/config.yaml
+python generar_informe_clinico.py --config config/config.yaml
+```
+
+[Guía completa de configuración, precedencia, rutas y pruebas](config/README.md).
+[Revisión de implementación y limitaciones](docs/revision_2026-10-03/INFORME.md).

@@ -1,7 +1,7 @@
 import pandas as pd
 from influxdb_client import InfluxDBClient
 import psycopg2
-import yaml
+from msConfig import load_config
 from msTools.models import CodeID, ActivityLeg, ActivityAll
 from msTools import i18n
 from msTools.timeutils import ensure_utc, influx_wallclock_z
@@ -50,7 +50,7 @@ class DataManager:
             token=self.config["influxdb"]["token"],
             org=self.config["influxdb"]["org"],
             timeout=self.config["influxdb"].get("timeout") or 30000,
-            verify_ssl=False,
+            verify_ssl=self.config["influxdb"]["verify_ssl"],
         )
         self.bucket: str = self.config["influxdb"]["bucket"]
         self.measurement: str = self.config['influxdb']['measurement']
@@ -69,8 +69,7 @@ class DataManager:
         :return: Configuration dictionary.
         :rtype: dict
         """
-        with open(config_path, "r", encoding="utf-8") as file:
-            return yaml.safe_load(file)
+        return load_config(config_path)
         
     def get_config(self, sect:str) -> Dict:
         """
@@ -98,7 +97,8 @@ class DataManager:
                 host=self.config["postgresql"]["host"],
                 database=self.config["postgresql"]["database"],
                 user=self.config["postgresql"]["user"],
-                password=self.config["postgresql"]["password"]
+                password=self.config["postgresql"]["password"],
+                port=self.config["postgresql"]["port"]
             )
         except psycopg2.OperationalError as e:
             print(i18n._("PGSQL-CONN-ERR").format(e=e))

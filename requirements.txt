@@ -6,6 +6,10 @@ urllib3
 openpyxl
 pydantic
 tables
+python-dotenv>=1.0
+scipy
+matplotlib
+
 sys
 os
 logging

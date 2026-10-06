@@ -8,7 +8,7 @@ import numpy as np
 # 1️ Inicializa conexión
 
 # Cambia la ruta a tu archivo config_db.yaml si es necesario
-config_path = "InfluxDBms/config_db.yaml"
+config_path = None
 db = cInfluxDB(config_path=config_path)
 
 
