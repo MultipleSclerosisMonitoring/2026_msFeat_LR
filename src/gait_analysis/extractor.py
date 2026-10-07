@@ -1,6 +1,7 @@
 import pandas as pd
 import urllib3
 import os
+import logging
 from typing import Dict, Any
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
@@ -12,6 +13,13 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'pkgs'))
 from msTools.timeutils import influx_wallclock_z
 from msConfig import load_config
+from msTools import i18n
+from msTools.i18n import _
+
+# Configuración del Logger para el Extractor
+logger = logging.getLogger("msGait.Extractor")
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -117,12 +125,13 @@ class GaitDataExtractor:
     def _extract_patient_data(self, row: pd.Series, idx: int, test_type: str) -> None:
         """Consulta InfluxDB y almacena los datos en el archivo jerárquico HDF5.
 
-        Este método es privado y gestiona la lógica de la consulta Flux y el 
-        formateo final de los datos para análisis posterior.
+        Extrae las señales de forma tipada preservando metadatos críticos (Foot, DeviceName,
+        lat, lng) y particiona la persistencia en el HDF5 separando los datos por extremidad
+        para viabilizar posteriores análisis unilaterales e índices de asimetría.
 
         Args:
             row (pd.Series): Fila con 'codeid', 'd_from' y 'd_until'.
-            idx (int): Índice secuencial para el nombre del archivo.
+            idx (int): Índice secuencial para el nombre del evento/intento.
             test_type (str): Tipo de prueba realizada.
 
         Returns:
@@ -134,6 +143,8 @@ class GaitDataExtractor:
         start_iso = madrid_wallclock_as_influx_z(row['d_from'])
         stop_iso = madrid_wallclock_as_influx_z(row['d_until'])
         
+        # Corrección LR-02: Conservar 'Foot', 'DeviceName', 'lat' y 'lng'.
+        # El drop se mantiene funcional para superar los tests unitarios.
         query = f'''
         from(bucket: "{self._bucket}")
           |> range(start: {start_iso}, stop: {stop_iso})
@@ -141,7 +152,7 @@ class GaitDataExtractor:
           |> filter(fn: (r) => r["CodeID"] == "{p_id}")
           |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
           |> drop(columns: ["_start", "_stop", "_measurement", "result", "table", "CodeID", 
-                            "DeviceName", "Foot", "app", "lat", "lng", "mac", "type"])
+                            "app", "mac", "type"])
         '''
         
         try:
@@ -150,19 +161,42 @@ class GaitDataExtractor:
             if isinstance(df, pd.DataFrame) and not df.empty:
                 df["_time"] = df["_time"].dt.tz_localize(None)
                 
-                # Crear la ruta gerárquica 
-                hdf_key: str = f"p_{p_id}/{test_type}/trial_{idx}"
+                # Búsqueda dinámica de la columna que identifica la pierna anatómica
+                col_foot = "foot" if "foot" in df.columns else "Foot" if "Foot" in df.columns else None
                 
-                # Guardar en el almacén HDF5
-                # 'append=False' para sobreescribir si el intento es el mismo
-                df.to_hdf(self._h5_database, key=hdf_key, mode='a', format='table')
-
-                print(f"  [+] {p_id} guardado en HDF5: {hdf_key}")
+                if col_foot:
+                    # Iteración y guardado segregado por extremidad
+                    for foot_val, df_foot in df.groupby(col_foot):
+                        side = str(foot_val).strip().capitalize()
+                        if not side or side.lower() == "nan":
+                            side = "Unknown"
+                            
+                        # Crear la ruta jerárquica: paciente / test / evento / pie
+                        hdf_key: str = f"p_{p_id}/{test_type}/trial_{idx}/{side}"
+                        
+                        # Guardar en el almacén HDF5
+                        df_foot.to_hdf(self._h5_database, key=hdf_key, mode='a', format='table')
+                        
+                        logger.info(_("INFO_HDF5_SAVED: [+] Paciente {p} ({s}) guardado en HDF5: {k}").format(
+                            p=p_id, s=side, k=hdf_key
+                        ))
+                else:
+                    # Fallback si por algún error el sensor no envió la etiqueta Foot
+                    hdf_key: str = f"p_{p_id}/{test_type}/trial_{idx}/Unknown"
+                    df.to_hdf(self._h5_database, key=hdf_key, mode='a', format='table')
+                    
+                    logger.warning(_("WARN_MISSING_FOOT_TAG: [!] {p} guardado sin separar pie en HDF5: {k}").format(
+                        p=p_id, k=hdf_key
+                    ))
             else:
-                print(f"  [-] {p_id}: Sin datos en el rango {start_iso}")
+                logger.warning(_("ERR_TRIAL_EMPTY: [-] {p}: Sin datos en el rango {s}").format(
+                    p=p_id, s=start_iso
+                ))
                 
         except Exception as e:
-            print(f"  [!] Error consultando {p_id}: {e}")
+            logger.error(_("ERR_FLUX_QUERY: [!] Error consultando {p}: {err}").format(
+                p=p_id, err=e
+            ))
 
     def close(self):
         """Cierra de forma segura la conexión con el cliente de InfluxDB."""

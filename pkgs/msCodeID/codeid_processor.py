@@ -1,11 +1,15 @@
 import pandas as pd
 from datetime import datetime
+import logging
 from pydantic import ValidationError
 from msTools.data_manager import DataManager
 from msTools import i18n
 from msTools.models import ActivityLeg, ActivityAll
 from msGait.models import ActivitySegment
 from msTools.timeutils import influx_wallclock_z
+
+# Configuración del Logger para la trazabilidad basada en niveles
+logger = logging.getLogger("msGait.CodeID")
 
 class CodeIDProcessor:
     """
@@ -137,12 +141,19 @@ class CodeIDProcessor:
         sg1: pd.DataFrame,
         sg2: pd.DataFrame
     ) -> pd.DataFrame:
-        """
-        Compute intersections between two sets of time segments.
+        """Calcula intersecciones temporales asegurando correspondencia anatómica por sujeto.
 
-        :param sg1: DataFrame of segments for leg 1.
-        :param sg2: DataFrame of segments for leg 2.
-        :return: DataFrame of overlapping intervals with index refs.
+        Particiona los intervalos exigiendo estrictamente que pertenezcan a la misma
+        persona o sesión (CodeID). Esto evita la atribución cruzada de piernas entre 
+        pacientes distintos que hayan realizado pruebas simultáneamente.
+
+        Args:
+            sg1 (pd.DataFrame): DataFrame de segmentos para la primera extremidad.
+            sg2 (pd.DataFrame): DataFrame de segmentos para la segunda extremidad.
+
+        Returns:
+            pd.DataFrame: DataFrame de intervalos superpuestos con referencias de índice 
+            (R1_id, R2_id) validadas para el mismo paciente.
         """
         def overlaps(r):
             return (r['time_from_1'] <= r['time_until_2'] and
@@ -161,16 +172,36 @@ class CodeIDProcessor:
 
         a = sg1.reset_index().rename(columns={'index':'R1_id'})
         b = sg2.reset_index().rename(columns={'index':'R2_id'})
-        cross = a.merge(b, how='cross', suffixes=('_1','_2'))
-        cross['intersects'] = cross.apply(overlaps, axis=1)
-        intr = cross[cross['intersects']]
-        if intr.empty:
+        
+        # Corrección LR-48: Fusión estricta por 'CodeID' en lugar de cruce global ('cross')
+        if 'CodeID' in a.columns and 'CodeID' in b.columns:
+            cross = a.merge(b, on='CodeID', suffixes=('_1','_2'))
+        else:
+            logger.warning(i18n._("WARN_MISSING_CODEID: Ausencia de clave de persona/sesión. Fusión global arriesgada."))
+            cross = a.merge(b, how='cross', suffixes=('_1','_2'))
+
+        if cross.empty:
             return pd.DataFrame(columns=[
                 'time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2'
             ])
 
-        intr.loc[:, ['time_from','time_until']] = intr.apply(intersection, axis=1)
-        return intr[['time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2']].reset_index(drop=True)
+        cross['intersects'] = cross.apply(overlaps, axis=1)
+        intr = cross[cross['intersects']].copy()
+        
+        if intr.empty:
+            logger.debug(i18n._("DEBUG_INTER_SEGS_EMPTY: No se encontraron superposiciones válidas tras cruzar por paciente."))
+            return pd.DataFrame(columns=[
+                'time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2'
+            ])
+
+        intr[['time_from','time_until']] = intr.apply(intersection, axis=1)
+        
+        # Selección segura de columnas para no romper compatibilidad aguas abajo
+        cols_to_keep = ['time_from','time_until','R1_id','R2_id']
+        if 'codeid_id_1' in intr.columns and 'codeid_id_2' in intr.columns:
+            cols_to_keep.extend(['codeid_id_1','codeid_id_2'])
+            
+        return intr[cols_to_keep].reset_index(drop=True)
 
     def merge_activity_legs_to_all(
         self,

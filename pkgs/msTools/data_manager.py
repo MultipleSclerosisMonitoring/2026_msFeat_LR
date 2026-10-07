@@ -191,17 +191,24 @@ class DataManager:
             return []
         
 
-    def fetch_data(self, query: str) -> pd.DataFrame:
+    def fetch_data(self, query: str, params: Optional[tuple] = None) -> pd.DataFrame:
         """
         Executes a SQL query in PostgreSQL and returns a DataFrame.
+        Supports parameterized queries to prevent SQL injection.
 
-        :param query: SQL query string.
+        :param query: SQL query string parameterized.
+        :param params: Optional tuple of parameters for the query.
         :return: DataFrame with query results.
         :rtype: pd.DataFrame
         """
         try:
             with self.pg_conn.cursor() as cursor:
-                cursor.execute(query)
+                # Ejecución segura pasando los parámetros por separado
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                    
                 columns = [desc[0] for desc in cursor.description] 
                 data = cursor.fetchall() 
                 return pd.DataFrame(data, columns=columns)
@@ -211,13 +218,14 @@ class DataManager:
 
     def segments_retrieval(
         self,
-        fstart: Optional[str] = None,
-        fend: Optional[str] = None,
+        fstart: Optional[datetime.datetime] = None,
+        fend: Optional[datetime.datetime] = None,
         ids: Optional[List[int]] = None,
         verbose: int = 0
     ) -> pd.DataFrame:
         """
         Retrieves records from `activity_all` by IDs or by time window.
+        Utilizes parameterized queries for strict security.
 
         :param fstart: start datetime (if no ids provided)
         :param fend: end datetime (if no ids provided)
@@ -227,31 +235,38 @@ class DataManager:
                 ['id', 'start_time', 'end_time', 'duration',
                 'codeid_ids', 'codeleg_ids', 'active_legs']
         """
+        params = None
+        
         if ids is not None:
             if verbose >= 1:
                 print(i18n._("INFO_SEGMENTS_BY_IDS").format(ids=ids))
-            ids_str = ", ".join(map(str, ids))
+            
+            # Uso seguro de ANY(%s) en psycopg2 para listas
             query = (
                 "SELECT id, start_time, end_time, duration, "
                 "codeid_ids, codeleg_ids, active_legs "
-                f"FROM activity_all WHERE id IN ({ids_str}) "
+                "FROM activity_all WHERE id = ANY(%s) "
                 "ORDER BY codeid_ids;"
             )
+            params = (ids,)
         else:
             if not fstart or not fend:
                 raise ValueError(i18n._("ERR_MISSING_IDS_OR_WINDOW"))
             if verbose >= 1:
                 print(i18n._("INFO_SEGMENTS_BY_RANGE").format(start=fstart, end=fend))
+            
+            # Inserción parametrizada (%s) protegiendo contra SQL Injection
             query = (
                 "SELECT id, start_time, end_time, duration, "
                 "codeid_ids, codeleg_ids, active_legs "
-                f"FROM activity_all "
-                f"WHERE start_time <= '{fend}' "
-                f"  AND end_time   >= '{fstart}' "
+                "FROM activity_all "
+                "WHERE start_time <= %s "
+                "  AND end_time   >= %s "
                 "ORDER BY codeid_ids;"
             )
+            params = (fend, fstart)
 
-        df = self.fetch_data(query)
+        df = self.fetch_data(query, params)
         if df.empty and verbose >= 1:
             print(i18n._("WARN_NO_SEGMENTS_FOUND"))
         else:

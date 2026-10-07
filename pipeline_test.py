@@ -100,162 +100,188 @@ class GaitPipeline:
             logger.error(f"[{cid}] - Error en consulta Flux: {e}")
             return pd.DataFrame()
 
-    def run_from_csv(self, csv_path: str | None = None):
+    def run_from_csv(self, csv_path: str | None = None) -> None:
+        """Ejecuta el procesamiento masivo de ensayos de marcha desde un registro CSV.
+
+        Procesa cada fila de ensayo de forma aislada a nivel de evento, calculando
+        las métricas espaciotemporales y la asimetría bilateral únicamente dentro
+        del mismo intento. Posteriormente, consolida los resultados por paciente
+        aplicando una regla explícita de agregación.
+
+        Args:
+            csv_path (str | None): Ruta al archivo CSV con el registro de ensayos.
+                Si no se especifica, se toma de la configuración cargada.
+
+        Returns:
+            None
+
+        Raises:
+            FileNotFoundError: Si el archivo de registro CSV no existe.
+        """
         config = getattr(self, "config", {})
         csv_path = csv_path or config.get("paths", {}).get("registry_csv", "tests.csv")
         fs = config.get("processing", {}).get("fs", 100)
         tests_df = pd.read_csv(csv_path)
-        pacientes_dict = {}
+
+        # Estructura intermedia: una fila por evento/intento
+        trials_records: list[dict[str, any]] = []
 
         for index, row in tests_df.iterrows():
-            cid = str(row['codeid']).strip()
-            test_type = str(row['t_code']).strip()
-            
-            if cid not in pacientes_dict:
-                pacientes_dict[cid] = {"CodeID": cid}
-            
-            # Influx contiene hora civil de Madrid serializada como UTC.
-            start_time = madrid_wallclock_as_influx_z(row['d_from'])
-            end_time = madrid_wallclock_as_influx_z(row['d_until'])
-            
-            logger.info(f"[{cid}] - Ingestando {test_type} desde InfluxDB...")
-            
+            trial_id = str(row.get("id", index)).strip()
+            cid = str(row["codeid"]).strip()
+            test_type = str(row["t_code"]).strip()
+
+            trial_data: dict[str, any] = {
+                "TrialID": trial_id,
+                "CodeID": cid,
+                "test_type": test_type,
+            }
+
+            # Influx contiene hora civil de Madrid serializada como UTC
+            start_time = madrid_wallclock_as_influx_z(row["d_from"])
+            end_time = madrid_wallclock_as_influx_z(row["d_until"])
+
+            logger.info(_("INFO_INGEST_TRIAL: [{cid}] - Ingestando evento {tid} ({tt}) desde InfluxDB...").format(
+                cid=cid, tid=trial_id, tt=test_type
+            ))
+
             # --- BLOQUE 1: INGESTA FLUX ---
             raw_df = self.fetch_data_flux(cid, start_time, end_time)
-            
+
             if raw_df.empty:
-                logger.error(f"[{cid}] - {test_type} - ERR_TRIAL_EMPTY (Sin datos en InfluxDB)")
+                logger.error(_("ERR_TRIAL_EMPTY: [{cid}] - Evento {tid} ({tt}) sin datos en InfluxDB").format(
+                    cid=cid, tid=trial_id, tt=test_type
+                ))
                 continue
 
             # Duración del test
             duracion_total = (pd.to_datetime(end_time) - pd.to_datetime(start_time)).total_seconds()
-            pacientes_dict[cid][f"{test_type}_duracion_seg"] = round(duracion_total, 2)
+            trial_data[f"{test_type}_duracion_seg"] = round(duracion_total, 2)
 
             # --- Persistencia en HDF5 (Almacén Jerárquico de Señales) ---
             try:
                 os.makedirs("data/raw", exist_ok=True)
                 h5_path = "data/raw/gait_study_data.h5"
-                
-                # Preparamos el DataFrame para compatibilidad con PyTables
+
                 df_export = raw_df.copy()
                 for col in df_export.columns:
-                    if df_export[col].dtype == 'object':
+                    if df_export[col].dtype == "object":
                         df_export[col] = df_export[col].astype(str)
-                
-                # Exportación con estructura jerárquica: /paciente/test/intento
-                hdf_key = f"p_{cid}/{test_type}/trial_{index}"
-                df_export.to_hdf(h5_path, key=hdf_key, mode='a', format='table', min_itemsize=100)
-                logger.debug(_("INFO_HDF5_SAVED: Señales serializadas en HDF5 con clave {k}").format(k=hdf_key))
-                
-            except Exception as e:
-                logger.warning(_("WARN_HDF5_SAVE_FAILED: Fallo al serializar en HDF5 para paciente {p} - Motivo: {err}").format(p=cid, err=e))
 
+                hdf_key = f"p_{cid}/{test_type}/trial_{trial_id}"
+                df_export.to_hdf(h5_path, key=hdf_key, mode="a", format="table", min_itemsize=100)
+                logger.debug(_("INFO_HDF5_SAVED: Señales serializadas en HDF5 con clave {k}").format(k=hdf_key))
+
+            except Exception as e:
+                logger.warning(_("WARN_HDF5_SAVE_FAILED: Fallo al serializar en HDF5 para paciente {p} - Motivo: {err}").format(
+                    p=cid, err=e
+                ))
 
             # --- BLOQUE 2 y 3: ANÁLISIS ---
-            # Las etiquetas en InfluxDB suelen venir como columnas tras el 'pivot'. 
-            # Aseguramos que existe la columna 'foot' o 'Foot'
-            col_foot = 'foot' if 'foot' in raw_df.columns else 'Foot' if 'Foot' in raw_df.columns else None
+            col_foot = "foot" if "foot" in raw_df.columns else "Foot" if "Foot" in raw_df.columns else None
 
             if not col_foot:
-                logger.warning(f"[{cid}] - No se encontró la etiqueta de pierna (Foot) en los datos.")
+                logger.warning(_("WARN_MISSING_FOOT_TAG: [{cid}] - No se encontró la etiqueta de pierna en evento {tid}").format(
+                    cid=cid, tid=trial_id
+                ))
                 continue
+
+            debe_excluir_giros = False if test_type == "TUG" else True
 
             for side in ["Left", "Right"]:
                 df_side = raw_df[raw_df[col_foot].astype(str).str.strip().str.capitalize() == side].copy()
-                
+
                 if df_side.empty:
                     continue
 
-                # Control de giros (Excluimos en 6MWT y T25FW, incluimos en TUG)
-                debe_excluir_giros = False if test_type == "TUG" else True
-
-                # Llamada al motor de cálculo
                 cad_res = self.calculator.calcular_cadencia(df_side, fs=fs, excluir_giros=debe_excluir_giros)
                 fas_res = self.calculator.calcular_fases(df_side)
 
                 prefix = f"{test_type}_{side}_"
-                pacientes_dict[cid].update({
+                trial_data.update({
                     f"{prefix}pasos": cad_res["num_pasos"],
                     f"{prefix}cadencia": cad_res["cadencia"],
                     f"{prefix}apoyo_prc": fas_res.get("apoyo_prc", 0),
-                    f"{prefix}balanceo_prc": fas_res.get("balanceo_prc", 0)
+                    f"{prefix}balanceo_prc": fas_res.get("balanceo_prc", 0),
                 })
 
                 if test_type == "6MWT":
                     decay_res = self.calculator.calcular_decaimiento_6mwt(df_side, fs=fs)
-                    pacientes_dict[cid].update({
+                    trial_data.update({
                         f"{prefix}decaimiento_prc": decay_res.get("6mwt_decaimiento", 0)
                     })
 
-                # --- Cálculo de Features Geométricas (Zancada) ---
                 stride_res = self.calculator.calcular_longitud_zancada(df_side)
-                
-                pacientes_dict[cid].update({
-                    f"{test_type}_{side}_stride_length_cm": stride_res.get("stride_length_cm", 0.0)
-                })
-                
-                # Bloque 3 de QA: Registro condicional (Nivel DEBUG)
+                trial_data[f"{test_type}_{side}_stride_length_cm"] = stride_res.get("stride_length_cm", 0.0)
+
                 if stride_res.get("status") == "WARNING":
-                    logger.debug(_("DEBUG_GEOMETRY_WARN: Excursión geométrica inusualmente baja detectada en paciente {p} ({s})").format(p=cid, s=side))
+                    logger.debug(_("DEBUG_GEOMETRY_WARN: Excursión inusualmente baja en paciente {p} ({s}) evento {tid}").format(
+                        p=cid, s=side, tid=trial_id
+                    ))
 
-
-                # --- Cálculo de Features Geométricas (Altura de Zancada / Foot Clearance) ---
                 height_res = self.calculator.calcular_altura_zancada(df_side)
-                
-                pacientes_dict[cid].update({
-                    f"{test_type}_{side}_step_height_cm": height_res.get("step_height_cm", 0.0)
-                })
-                
-                # Bloque 3 de QA: Log de advertencia clínica (Nivel DEBUG multilingüe)
+                trial_data[f"{test_type}_{side}_step_height_cm"] = height_res.get("step_height_cm", 0.0)
+
                 if height_res.get("status") == "WARNING":
-                    logger.debug(_("DEBUG_GEOMETRY_WARN: Altura de zancada atípica (posible arrastre o foot drop) en paciente {p} ({s})").format(p=cid, s=side))
+                    logger.debug(_("DEBUG_GEOMETRY_WARN: Altura atípica en paciente {p} ({s}) evento {tid}").format(
+                        p=cid, s=side, tid=trial_id
+                    ))
 
-           # --- Cálculo de Asimetría Bilateral (Symmetry Index) ---
-            cad_l = pacientes_dict[cid].get(f"{test_type}_Left_cadencia", 0.0)
-            cad_r = pacientes_dict[cid].get(f"{test_type}_Right_cadencia", 0.0)
-            
+            # --- Cálculo de Asimetría Bilateral: EXCLUSIVO del evento actual ---
+            cad_l = trial_data.get(f"{test_type}_Left_cadencia", 0.0)
+            cad_r = trial_data.get(f"{test_type}_Right_cadencia", 0.0)
+
             if cad_l > 0 and cad_r > 0:
-                # Calculamos la diferencia porcentual absoluta entre ambas extremidades
                 symmetry_index = (abs(cad_l - cad_r) / (0.5 * (cad_l + cad_r))) * 100
+                trial_data[f"{test_type}_symmetry_index"] = round(symmetry_index, 2)
+                if symmetry_index > 20.0:
+                    logger.debug(_("DEBUG_ASYMMETRY_DETECTED: Alta asimetría en evento {tid} paciente {p} ({si}%)").format(
+                        tid=trial_id, p=cid, si=round(symmetry_index, 2)
+                    ))
             else:
-                # Si falta una pierna, la asimetría no es calculable de forma segura
-                symmetry_index = 0.0
-                
-            pacientes_dict[cid][f"{test_type}_symmetry_index"] = round(symmetry_index, 2)
-            
-            if symmetry_index > 20.0:
-                logger.debug(_("DEBUG_ASYMMETRY_DETECTED: Índice de asimetría alto detectado en paciente {p} ({si}%)").format(p=cid, si=round(symmetry_index, 2)))
+                # Si en este ensayo falta un pie, no se puede calcular bilateralidad
+                trial_data[f"{test_type}_symmetry_index"] = np.nan
 
-        # --- EXPORTACIÓN BLINDADA ---
-        if not pacientes_dict:
-            logger.error("No se generaron datos para ningún paciente. Revisa la conexión a InfluxDB.")
+            trials_records.append(trial_data)
+
+        if not trials_records:
+            logger.error(_("ERR_NO_DATA_PROCESSED: No se generaron datos para ningún ensayo clínico."))
             return
 
-        # Convertimos el diccionario acumulativo directamente en el DataFrame final
-        dataset_aplanado = list(pacientes_dict.values())
-        df_final = pd.DataFrame(dataset_aplanado).fillna("N/A")
+        # --- CONSOLIDACIÓN EXPLÍCITA POR PACIENTE ---
+        df_trials = pd.DataFrame(trials_records)
+
+        # Regla de consolidación: tomar el último ensayo válido con asimetría completa
+        # por paciente y tipo de test; en su defecto, el último ensayo registrado.
+        pacientes_consolidados: dict[str, dict[str, any]] = {}
+
+        for cid, group in df_trials.groupby("CodeID"):
+            paciente_row = {"CodeID": cid}
+            for t_code, sub_group in group.groupby("test_type"):
+                valid_trials = sub_group[sub_group[f"{t_code}_symmetry_index"].notna()]
+                selected = valid_trials.iloc[-1] if not valid_trials.empty else sub_group.iloc[-1]
+                
+                # Incorporamos columnas del test seleccionado descartando metadatos de evento
+                metric_cols = [c for c in selected.index if c not in ["TrialID", "CodeID", "test_type"]]
+                paciente_row.update(selected[metric_cols].dropna().to_dict())
+
+            pacientes_consolidados[cid] = paciente_row
+
+        df_final = pd.DataFrame(list(pacientes_consolidados.values())).fillna("N/A")
 
         output = config.get("paths", {}).get("output_dataset", "DatasetMaestro.xlsx")
         os.makedirs(os.path.dirname(os.path.abspath(output)), exist_ok=True)
         with pd.ExcelWriter(output) as writer:
-            # 1. Guardar la hoja principal
             df_final.to_excel(writer, sheet_name="Datos_Pacientes", index=False)
-            
-            # 2. Calcular estadísticas de forma segura
-            # Convertimos a numérico: lo que sea texto puro (como CodeID) se convertirá en NaN y será ignorado
-            df_numeric = df_final.apply(lambda x: pd.to_numeric(x, errors='coerce'))
-                
-            # Eliminamos las columnas que sean 100% texto/NaN
-            df_numeric = df_numeric.dropna(axis=1, how='all')
-                
-            # Solo generamos estadísticas si realmente hay datos numéricos que calcular
+
+            df_numeric = df_final.apply(lambda x: pd.to_numeric(x, errors="coerce")).dropna(axis=1, how="all")
             if not df_numeric.empty:
-                stats = df_numeric.describe().loc[['mean', '50%', 'std']]
+                stats = df_numeric.describe().loc[["mean", "50%", "std"]]
                 stats.to_excel(writer, sheet_name="Estadisticas_Globales")
             else:
-                logger.warning("No hay suficientes datos numéricos para calcular las Estadísticas Globales.")
-            
-        logger.info("Pipeline finalizado: Excel generado (%s).", output)
+                logger.warning(_("WARN_NO_NUMERIC_STATS: No hay suficientes datos numéricos para Estadísticas Globales."))
+
+        logger.info(_("INFO_PIPELINE_COMPLETED: Pipeline finalizado. Excel generado ({out}).").format(out=output))
 
 if __name__ == "__main__":
     import argparse
