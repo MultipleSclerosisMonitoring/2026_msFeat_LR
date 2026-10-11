@@ -1,25 +1,10 @@
 import pandas as pd
 from influxdb_client import InfluxDBClient
 from datetime import datetime
-import urllib3
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pkgs"))
-from msConfig import load_config
-from urllib.parse import urlparse, urlunparse
-
-INFLUX_IP_HOST = "138.100.82.178"
-INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
-
-
-def normalize_influx_url(url: str) -> str:
-    parsed = urlparse(url)
-    if parsed.hostname != INFLUX_IP_HOST:
-        return url
-    netloc = INFLUX_CERT_HOST
-    if parsed.port:
-        netloc = f"{netloc}:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=netloc))
+from msConfig import influx_client_options, load_config
 
 
 def influx_wallclock_z(value) -> str:
@@ -28,9 +13,6 @@ def influx_wallclock_z(value) -> str:
         ts = ts.tz_localize(None)
     text = ts.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
     return text.replace('.000000Z', 'Z')
-
-# Desactiva las advertencias de SSL
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class cInfluxDB:
     def __init__(self, config_path: str, timeout: int | None = None):
@@ -50,11 +32,13 @@ class cInfluxDB:
         self.bucket = config['influxdb']['bucket']
         self.org = config['influxdb']['org']
         self.token = config['influxdb']['token']
-        self.url = normalize_influx_url(config['influxdb']['url'])
+        self.url = config['influxdb']['url']
 
         # Initialises the InfluxDB client
-        self.client = InfluxDBClient(url=self.url, token=self.token, org=self.org, \
-                                     verify_ssl=config["influxdb"]["verify_ssl"], timeout=timeout if timeout is not None else config["influxdb"]["timeout"])
+        options = influx_client_options(config)
+        if timeout is not None:
+            options["timeout"] = timeout
+        self.client = InfluxDBClient(**options)
         self.measurement = config["influxdb"]["measurement"]
 
     def query_data(self, from_date: datetime, to_date: datetime, qtok: str, pie: str, 

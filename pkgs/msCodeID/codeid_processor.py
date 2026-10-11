@@ -7,6 +7,7 @@ from msTools import i18n
 from msTools.models import ActivityLeg, ActivityAll
 from msGait.models import ActivitySegment
 from msTools.timeutils import influx_wallclock_z
+from msTools.flux import flux_range, flux_string
 
 # Configuración del Logger para la trazabilidad basada en niveles
 logger = logging.getLogger("msGait.CodeID")
@@ -45,9 +46,9 @@ class CodeIDProcessor:
         end_str = influx_wallclock_z(end_datetime)
 
         query = f'''
-        from(bucket: "{self.bucket}")
-            |> range(start: {start_str}, stop: {end_str})
-            |> filter(fn: (r) => r["CodeID"] == "{codeid}" and r["_field"] == "Ax")
+        from(bucket: {flux_string(self.bucket)})
+            |> range({flux_range(start_str, end_str)})
+            |> filter(fn: (r) => r["CodeID"] == {flux_string(codeid)} and r["_field"] == "Ax")
             |> aggregateWindow(every: 1m, fn: count, createEmpty: false)
             |> keep(columns: ["_time", "CodeID", "_field", "_value", "Foot", "lat", "lng", "mac", "DeviceName"])
         '''
@@ -89,7 +90,7 @@ class CodeIDProcessor:
         """
         def grouping(block: pd.DataFrame, thresh: float) -> pd.DataFrame:
             """
-            Group rows into segments where time gaps or device changes occur.
+            Group rows into segments where time gaps, device or CodeID changes occur.
 
             :param block: Filtered DataFrame for one leg.
             :param thresh: Threshold in seconds for a new group.
@@ -100,7 +101,8 @@ class CodeIDProcessor:
             )
             block = block.assign(
                 group=((block['_time_diff'] > thresh) |
-                       (block['DeviceName'] != block['DeviceName'].shift())).cumsum()
+                       (block['DeviceName'] != block['DeviceName'].shift()) |
+                       (block['CodeID'] != block['CodeID'].shift())).cumsum()
             )
             result = block.groupby('group').agg(
                 time_from=pd.NamedAgg(column='_time', aggfunc='first'),
@@ -120,15 +122,16 @@ class CodeIDProcessor:
                 'time_from','time_until','CodeID','DeviceName','Foot','total_value','mac'
             ])
 
-        # Ensure '_time' is datetime with timezone
+        # Ensure '_time' is datetime with timezone (on a copy: the caller's frame is not modified)
+        df = df.copy()
         if not pd.api.types.is_datetime64_any_dtype(df["_time"]):
             df["_time"] = pd.to_datetime(df["_time"])
             if df["_time"].dt.tz is None:
                 df["_time"] = df["_time"].dt.tz_localize("Europe/Madrid")
 
         # Drop unwanted columns, sort by time
-        clean = df.drop(columns=['result','table','_field','lng','lat']) \
-                  .sort_values("_time")
+        clean = df.drop(columns=['result','table','_field','lng','lat'], errors='ignore') \
+                  .sort_values(["CodeID", "_time"])
         filtered = clean[clean['Foot'] == foot]
         grouped  = grouping(filtered, threshold_seconds)
 
@@ -141,67 +144,68 @@ class CodeIDProcessor:
         sg1: pd.DataFrame,
         sg2: pd.DataFrame
     ) -> pd.DataFrame:
-        """Calcula intersecciones temporales asegurando correspondencia anatómica por sujeto.
+        """Calcula intersecciones temporales entre los segmentos de las dos piernas.
 
-        Particiona los intervalos exigiendo estrictamente que pertenezcan a la misma
-        persona o sesión (CodeID). Esto evita la atribución cruzada de piernas entre 
-        pacientes distintos que hayan realizado pruebas simultáneamente.
+        Una persona tiene un único CodeID para los dos calcetines y el pie se
+        distingue por la etiqueta ``Foot``; por eso solo se cruzan intervalos
+        del mismo CodeID, lo que impide atribuir la pierna de un paciente a otro
+        que hiciera la prueba a la vez. Solo cuentan las intersecciones de
+        duración positiva: dos intervalos que únicamente se tocan no se solapan.
+        El cruce es un barrido de intervalos ordenados por inicio, no un producto
+        cartesiano, y es correcto aunque los segmentos de una misma pierna se
+        solapen entre sí.
 
         Args:
-            sg1 (pd.DataFrame): DataFrame de segmentos para la primera extremidad.
-            sg2 (pd.DataFrame): DataFrame de segmentos para la segunda extremidad.
+            sg1 (pd.DataFrame): Segmentos de la primera extremidad, con
+                ``time_from``, ``time_until`` y ``CodeID``.
+            sg2 (pd.DataFrame): Segmentos de la segunda extremidad.
 
         Returns:
-            pd.DataFrame: DataFrame de intervalos superpuestos con referencias de índice 
-            (R1_id, R2_id) validadas para el mismo paciente.
+            pd.DataFrame: Intervalos superpuestos con ``time_from``,
+            ``time_until``, las referencias de índice ``R1_id`` y ``R2_id`` y,
+            si existen en la entrada, ``codeid_id_1`` y ``codeid_id_2``.
         """
-        def overlaps(r):
-            return (r['time_from_1'] <= r['time_until_2'] and
-                    r['time_from_2'] <= r['time_until_1'])
-
-        def intersection(r):
-            return pd.Series({
-                'time_from': max(r['time_from_1'], r['time_from_2']),
-                'time_until': min(r['time_until_1'], r['time_until_2'])
-            })
-
+        columns = ['time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2']
         if sg1.empty or sg2.empty:
-            return pd.DataFrame(columns=[
-                'time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2'
-            ])
+            return pd.DataFrame(columns=columns)
 
-        a = sg1.reset_index().rename(columns={'index':'R1_id'})
-        b = sg2.reset_index().rename(columns={'index':'R2_id'})
-        
-        # Corrección LR-48: Fusión estricta por 'CodeID' en lugar de cruce global ('cross')
-        if 'CodeID' in a.columns and 'CodeID' in b.columns:
-            cross = a.merge(b, on='CodeID', suffixes=('_1','_2'))
-        else:
+        keyed = 'CodeID' in sg1.columns and 'CodeID' in sg2.columns
+        if not keyed:
             logger.warning(i18n._("WARN_MISSING_CODEID: Ausencia de clave de persona/sesión. Fusión global arriesgada."))
-            cross = a.merge(b, how='cross', suffixes=('_1','_2'))
+        with_ids = 'codeid_id' in sg1.columns and 'codeid_id' in sg2.columns
 
-        if cross.empty:
-            return pd.DataFrame(columns=[
-                'time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2'
-            ])
+        def by_person(frame: pd.DataFrame) -> dict:
+            """Agrupa los segmentos por CodeID."""
+            return dict(tuple(frame.groupby('CodeID', sort=False))) if keyed else {None: frame}
 
-        cross['intersects'] = cross.apply(overlaps, axis=1)
-        intr = cross[cross['intersects']].copy()
-        
-        if intr.empty:
+        first, second = by_person(sg1), by_person(sg2)
+        rows = []
+        for person in first.keys() & second.keys():
+            # Eventos de inicio de las dos piernas, ordenados; los de duración nula no pueden solapar.
+            events = sorted(
+                (row['time_from'], side, label, row['time_until'], row.get('codeid_id'))
+                for side, frame in ((0, first[person]), (1, second[person]))
+                for label, row in frame.iterrows() if row['time_from'] < row['time_until']
+            )
+            active = ([], [])  # segmentos aún abiertos de cada pierna
+            for start, side, label, stop, codeid_id in events:
+                other = 1 - side
+                # Un segmento que termina en este instante o antes solo se toca: se cierra.
+                active[other][:] = [item for item in active[other] if item[0] > start]
+                for other_stop, other_label, other_codeid_id in active[other]:
+                    ids = (label, other_label) if side == 0 else (other_label, label)
+                    row = {'time_from': start, 'time_until': min(stop, other_stop), 'R1_id': ids[0], 'R2_id': ids[1]}
+                    if with_ids:
+                        codes = (codeid_id, other_codeid_id) if side == 0 else (other_codeid_id, codeid_id)
+                        row.update(codeid_id_1=codes[0], codeid_id_2=codes[1])
+                    rows.append(row)
+                active[side].append((stop, label, codeid_id))
+
+        if not rows:
             logger.debug(i18n._("DEBUG_INTER_SEGS_EMPTY: No se encontraron superposiciones válidas tras cruzar por paciente."))
-            return pd.DataFrame(columns=[
-                'time_from','time_until','R1_id','R2_id','codeid_id_1','codeid_id_2'
-            ])
-
-        intr[['time_from','time_until']] = intr.apply(intersection, axis=1)
-        
-        # Selección segura de columnas para no romper compatibilidad aguas abajo
-        cols_to_keep = ['time_from','time_until','R1_id','R2_id']
-        if 'codeid_id_1' in intr.columns and 'codeid_id_2' in intr.columns:
-            cols_to_keep.extend(['codeid_id_1','codeid_id_2'])
-            
-        return intr[cols_to_keep].reset_index(drop=True)
+            return pd.DataFrame(columns=columns)
+        result = pd.DataFrame(rows).sort_values(['R1_id', 'R2_id']).reset_index(drop=True)
+        return result[columns] if with_ids else result[columns[:4]]
 
     def merge_activity_legs_to_all(
         self,
@@ -273,6 +277,7 @@ class CodeIDProcessor:
         try:
             self.data_manager.store_data(table_name, df)
         except Exception as e:
-            print(i18n._("ERR_SAVE_TABLE").format(
+            logger.error(i18n._("ERR_SAVE_TABLE").format(
                 table=table_name, error=str(e)
             ))
+            raise

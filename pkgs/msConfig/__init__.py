@@ -1,6 +1,7 @@
 """Shared YAML/environment loader, with no database or scientific imports."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -11,6 +12,9 @@ import yaml
 from dotenv import dotenv_values
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOCALES_DIR = Path(__file__).resolve().parents[1] / 'locales'
+CONNECTION_SECTIONS = ('influxdb', 'postgresql')
+logger = logging.getLogger('msGait.Config')
 DEFAULT_CONFIG = PROJECT_ROOT / 'config' / 'config.yaml'
 _PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}')
 
@@ -74,14 +78,69 @@ def _boolean(value: Any, label: str) -> bool:
     raise ConfigError(f'{label} debe ser true o false.')
 
 
-def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Path | None = None) -> dict:
+def _number(section: dict, key: str, label: str, *, minimum: float = 0.0, strict: bool = True) -> float | None:
+    """Validate an optional numeric analysis parameter and return it as float."""
+    if key not in section:
+        return None
+    value = section[key]
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        number = float(value)
+        if number != number or number in (float('inf'), float('-inf')) or number < minimum or (strict and number == minimum):
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ConfigError(f'{label}.{key} debe ser un número finito {"mayor que" if strict else "mayor o igual que"} {minimum:g}.') from None
+    return number
+
+
+def influx_client_options(config: dict) -> dict:
+    """Build the keyword arguments shared by every ``InfluxDBClient`` in the project.
+
+    TLS verification follows the configuration and is on by default. When it is
+    disabled a project warning is logged; urllib3 warnings are never silenced.
+
+    Args:
+        config: Configuration returned by :func:`load_config` with ``influxdb`` loaded.
+
+    Returns:
+        dict: ``url``, ``token``, ``org``, ``timeout``, ``verify_ssl`` and, if
+        configured, ``ssl_ca_cert``.
+    """
+    inf = config['influxdb']
+    options = {'url': inf['url'], 'token': inf['token'], 'org': inf['org'],
+               'timeout': inf['timeout'], 'verify_ssl': inf['verify_ssl']}
+    if inf.get('ssl_ca_cert'):
+        options['ssl_ca_cert'] = inf['ssl_ca_cert']
+    if not inf['verify_ssl']:
+        logger.warning('WARN_TLS_VERIFY_OFF: La verificación del certificado TLS de InfluxDB está desactivada '
+                       '(influxdb.verify_ssl: false). La conexión no comprueba la identidad del servidor.')
+    return options
+
+
+def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Path | None = None,
+                sections: tuple[str, ...] | list[str] | None = None) -> dict:
     """Load YAML, expand environment references, validate, and resolve paths.
 
     Process environment wins over .env. No environment variables are mutated.
     Repo configs use the repo .env; external configs use an adjacent .env.
     All entries in ``paths`` are relative to the YAML directory.
+
+    Connection settings and analysis parameters are validated separately.
+    ``sections`` names the connection sections the task needs (``influxdb``,
+    ``postgresql``): only those are expanded, validated and returned, so an
+    offline task does not require database variables. ``None`` keeps the
+    historical behaviour: ``influxdb`` is required and ``postgresql`` is
+    validated when declared.
+
+    Raises:
+        ConfigError: If the YAML, a requested connection or an analysis
+            parameter is invalid. Messages never include configuration values.
     """
     path = resolve_config_path(config_path)
+    wanted = None if sections is None else set(sections)
+    if wanted is not None and wanted - set(CONNECTION_SECTIONS):
+        raise ConfigError('sections solo admite influxdb y postgresql.')
     if dotenv_path is not None:
         env_file = Path(dotenv_path).expanduser().resolve()
         if not env_file.is_file():
@@ -96,10 +155,25 @@ def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Pat
         raise ConfigError('YAML inválido; revise su estructura y codificación UTF-8.') from None
     if not isinstance(raw, dict) or any(not isinstance(k, str) for k in raw):
         raise ConfigError('El YAML debe contener un mapa de secciones.')
+    if wanted is not None:
+        # Connection sections the task does not use are neither expanded nor returned.
+        raw = {key: value for key, value in raw.items() if key not in CONNECTION_SECTIONS or key in wanted}
+        missing = sorted(wanted - set(raw))
+        if missing:
+            raise ConfigError(f'Falta la sección {missing[0]}.')
     config = _expand(raw, env)
-    for label in ('influxdb', 'postgresql', 'paths', 'processing', 'batch', 'project'):
+    for label in ('influxdb', 'postgresql', 'paths', 'processing', 'batch', 'project', 'movement'):
         if label in config and not isinstance(config[label], dict):
             raise ConfigError(f'{label} debe ser un mapa.')
+    if wanted is None or 'influxdb' in wanted:
+        _validate_influxdb(config, path)
+    _validate_postgresql(config)
+    _validate_analysis(config, path)
+    return config
+
+
+def _validate_influxdb(config: dict, path: Path) -> None:
+    """Validate and normalise the ``influxdb`` connection section."""
     inf = config.get('influxdb')
     if not isinstance(inf, dict):
         raise ConfigError('Falta la sección influxdb.')
@@ -119,6 +193,18 @@ def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Pat
     inf.setdefault('measurement', 'Gait')
     if not isinstance(inf['measurement'], str) or not inf['measurement'].strip():
         raise ConfigError('influxdb.measurement debe ser una cadena no vacía.')
+    if inf.get('ssl_ca_cert') is not None:
+        if not isinstance(inf['ssl_ca_cert'], str) or not inf['ssl_ca_cert'].strip():
+            raise ConfigError('influxdb.ssl_ca_cert debe ser una ruta no vacía.')
+        bundle = Path(inf['ssl_ca_cert']).expanduser()
+        bundle = (bundle if bundle.is_absolute() else path.parent / bundle).resolve()
+        if not bundle.is_file():
+            raise ConfigError('influxdb.ssl_ca_cert no existe.')
+        inf['ssl_ca_cert'] = str(bundle)
+
+
+def _validate_postgresql(config: dict) -> None:
+    """Validate the ``postgresql`` connection section when it is loaded."""
     pg = config.get('postgresql')
     if pg is not None:
         for key in ('host', 'user', 'password', 'database'):
@@ -127,12 +213,30 @@ def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Pat
         _positive_int(pg, 'port', 'postgresql', 5432)
         if pg['port'] > 65535:
             raise ConfigError('postgresql.port debe ser menor o igual a 65535.')
+        if pg.get('connect_timeout') is not None:
+            _positive_int(pg, 'connect_timeout', 'postgresql', 10)
+
+
+def _validate_analysis(config: dict, path: Path) -> None:
+    """Validate paths and analysis parameters, independent of any connection."""
     paths = config.setdefault('paths', {})
     for key, value in paths.items():
         if not isinstance(value, str) or not value.strip():
             raise ConfigError(f'paths.{key} debe ser una ruta no vacía.')
         item = Path(value).expanduser()
         paths[key] = str((item if item.is_absolute() else path.parent / item).resolve())
+    # Single source of path defaults, relative to the repo root (never to the CWD).
+    paths.setdefault('registry_csv', str(PROJECT_ROOT / 'tests.csv'))
+    paths.setdefault('output_folder', str(PROJECT_ROOT / 'data' / 'raw'))
+    paths.setdefault('h5_path', str(Path(paths['output_folder']) / 'gait_study_data.h5'))
+    paths.setdefault('output_dataset', str(PROJECT_ROOT / 'DatasetMaestro.xlsx'))
+    # An output must never overwrite the input registry or another output.
+    targets = {key: os.path.normcase(paths[key]) for key in ('registry_csv', 'h5_path', 'output_dataset', 'output_report') if key in paths}
+    names = list(targets)
+    for index, first in enumerate(names):
+        for second in names[index + 1:]:
+            if targets[first] == targets[second]:
+                raise ConfigError(f'paths.{first} y paths.{second} no pueden ser el mismo archivo.')
     processing = config.setdefault('processing', {})
     if 'fs' in processing:
         try:
@@ -142,6 +246,22 @@ def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Pat
         except (TypeError, ValueError):
             raise ConfigError('processing.fs debe ser finito y mayor que 10 Hz para los filtros actuales.') from None
         processing['fs'] = fs
-    config.setdefault('batch', {}).setdefault('test_type', '6MWT')
-    config.setdefault('project', {}).setdefault('language', 'es')
-    return config
+    batch = config.setdefault('batch', {})
+    batch.setdefault('test_type', '6MWT')
+    if not isinstance(batch['test_type'], str) or not batch['test_type'].strip():
+        raise ConfigError('batch.test_type debe ser un código de test no vacío (o "all").')
+    project = config.setdefault('project', {})
+    project.setdefault('language', 'es')
+    available = sorted(item.name for item in LOCALES_DIR.iterdir() if item.is_dir()) if LOCALES_DIR.is_dir() else []
+    if not isinstance(project['language'], str) or (available and project['language'] not in available):
+        raise ConfigError(f'project.language debe ser uno de: {", ".join(available) or "es"}.')
+    movement = config.get('movement')
+    if movement is not None:
+        low = _number(movement, 'freq_band_min', 'movement')
+        high = _number(movement, 'freq_band_max', 'movement')
+        if low is not None and high is not None and low >= high:
+            raise ConfigError('movement.freq_band_min debe ser menor que movement.freq_band_max.')
+        for key in ('accel_threshold', 'gyro_threshold', 'accel_power_threshold', 'gyro_power_threshold'):
+            _number(movement, key, 'movement')
+        if 'min_continuous_hits' in movement:
+            _positive_int(movement, 'min_continuous_hits', 'movement', 1)

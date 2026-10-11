@@ -4,20 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gait_analysis"
-requires-python = ">=3.11"
 version = "0.1.0"
+description = "Extracción de señales de marcha y cálculo de métricas (TFG, 2026_msFeat_LR)"
+readme = "README.md"
+# Intervalo propuesto: 3.11 a 3.13. Probado hasta ahora solo con Python 3.13.
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+# Lo que necesita pipeline_test.py (InfluxDB -> HDF5 -> métricas -> Excel).
 dependencies = [
     "pandas",
-    "pydantic",
+    "numpy",
+    "scipy",
     "influxdb-client",
     "tables",
+    "openpyxl",
     "pyyaml",
     "python-dotenv>=1.0",
-    "scipy",
-    "matplotlib",
-    "openpyxl"
 ]
 
+[project.optional-dependencies]
+# python graficas_tfg.py
+graficos = ["matplotlib", "seaborn"]
+# Paquete heredado pkgs/: DataManager, MovementDetector, CodeIDProcessor
+pg = ["psycopg2>=2.9.5", "pydantic>=2", "xlsxwriter"]
+# pkgs/api.py
+api = ["gait_analysis[pg]", "fastapi", "uvicorn[standard]"]
+# Tests y generación de DUDAS.pdf
+dev = ["gait_analysis[graficos]", "pytest", "httpx", "reportlab"]
+
+# El paquete instalable contiene la biblioteca; pipeline_test.py, GaitMetricsCalculator.py y
+# graficas_tfg.py se ejecutan desde la carpeta del repositorio (instalación editable).
 [tool.setuptools.packages.find]
 where = ["src", "pkgs"]
-include = ["gait_analysis*", "msConfig*", "msTools*"]
+include = ["gait_analysis*", "msConfig*", "msTools*", "msGait*", "msCodeID*"]

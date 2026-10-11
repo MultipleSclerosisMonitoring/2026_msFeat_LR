@@ -1,67 +1,173 @@
-import pandas as pd
-import urllib3
-import os
 import logging
-from typing import Dict, Any
-from pathlib import Path
-from urllib.parse import urlparse, urlunparse
-from pydantic import BaseModel, Field
-from influxdb_client import InfluxDBClient
-
+import os
 import sys
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Iterable
+
+import pandas as pd
+from influxdb_client import InfluxDBClient
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'pkgs'))
 from msTools.timeutils import influx_wallclock_z
-from msConfig import load_config
-from msTools import i18n
+from msConfig import influx_client_options, load_config
 from msTools.i18n import _
+
+from .logging_utils import log_summary
+from .query import fetch_trial_frame, split_series
+from .registry import (
+    STATUS_EMPTY, STATUS_OK, STATUS_QUERY_ERROR, STATUS_SKIPPED, STATUS_WRITE_ERROR,
+    Trial, TrialResult, load_registry,
+)
+from .storage import Manifest, SignalStore, StorageError, audit_store, manifest_path_for
 
 # Configuración del Logger para el Extractor
 logger = logging.getLogger("msGait.Extractor")
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+def acquire_trial(
+    client: Any,
+    bucket: str,
+    measurement: str,
+    store: SignalStore,
+    manifest: Manifest,
+    trial: Trial,
+    run_id: str,
+    completed: Dict[str, list[str]] | None = None,
+    load_stored: bool = False,
+) -> tuple[TrialResult, Dict[str, pd.DataFrame]]:
+    """Obtiene, normaliza y persiste las señales de un evento.
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    Es el único camino de adquisición, compartido por el extractor y por el
+    pipeline directo. Nunca lanza excepciones por un evento: el fallo queda
+    descrito en el resultado y en el manifest.
 
-INFLUX_IP_HOST = "138.100.82.178"
-INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
+    Args:
+        client (Any): Cliente ``InfluxDBClient`` ya conectado.
+        bucket (str): Bucket de InfluxDB.
+        measurement (str): Valor de ``_measurement`` a seleccionar.
+        store (SignalStore): Almacén HDF5 abierto para escritura.
+        manifest (Manifest): Manifest donde se anota el resultado.
+        trial (Trial): Evento validado del registro.
+        run_id (str): Identificador de la ejecución en curso.
+        completed (Dict[str, list[str]] | None): Eventos ya completados según el
+            manifest. Si se indica, los que conservan sus claves no se consultan.
+        load_stored (bool): Con ``completed``, devolver las señales almacenadas
+            en lugar de marcar el evento como ``SKIPPED``.
 
-
-def normalize_influx_url(url: str) -> str:
-    """Use the DNS name covered by the TLS certificate when the old IP is configured."""
-    parsed = urlparse(url)
-    if parsed.hostname != INFLUX_IP_HOST:
-        return url
-
-    netloc = INFLUX_CERT_HOST
-    if parsed.port:
-        netloc = f"{netloc}:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
-
-def madrid_wallclock_as_influx_z(value: str) -> str:
-    """Influx stores Madrid wall-clock timestamps as if they were UTC."""
-    return influx_wallclock_z(value)
-
-
-class InfluxConfig(BaseModel):
-    """Esquema de validación para la configuración de InfluxDB.
-
-    Utiliza Pydantic para asegurar que el archivo YAML contenga todos los campos
-    necesarios con el formato correcto antes de iniciar la conexión.
-
-    Attributes:
-        url (str): Dirección del servidor InfluxDB.
-        token (str): Token de autenticación (se trata como cadena sensible).
-        org (str): Organización dentro de InfluxDB.
-        bucket (str): Nombre del bucket de datos.
+    Returns:
+        tuple[TrialResult, Dict[str, pd.DataFrame]]: Resultado del evento y
+        señales por pie (vacío si no hay datos o el evento se omitió).
     """
-    url: str = Field(..., description="URL del servidor InfluxDB")
-    token: str = Field(..., description="Token de acceso")
-    org: str = Field(..., description="Nombre de la organización")
-    bucket: str = Field(..., description="Bucket de datos")
-    timeout: int | None = Field(default=None, description="Timeout del cliente InfluxDB en ms")
+    started = time.perf_counter()
+    result = TrialResult.from_trial(trial)
+    frames: Dict[str, pd.DataFrame] = {}
+
+    stored_keys = (completed or {}).get(trial.trial_id, [])
+    if stored_keys and all(store.has(key) for key in stored_keys):
+        if not load_stored:
+            result.status = STATUS_SKIPPED
+            result.detail = "ya completado según el manifest"
+            logger.debug(_("DEBUG_TRIAL_SKIPPED: Evento {0} ya completado; no se consulta").format(trial.trial_id))
+            return result, frames
+        try:
+            for key in stored_keys:
+                side = key.rsplit("/", 1)[-1]
+                frames[side] = store.read(key)
+                result.feet[side] = {
+                    "key": key, "rows": len(frames[side]), "device": store.meta(key).get("device", ""),
+                }
+            result.source = "hdf5"
+            result.elapsed_s = time.perf_counter() - started
+            logger.debug(_("DEBUG_TRIAL_REUSED: Evento {0} leído del HDF5; no se consulta").format(trial.trial_id))
+            return result, frames
+        except Exception as error:
+            logger.warning(_("WARN_STORED_UNREADABLE: Evento {0} no legible en HDF5 ({1}); se vuelve a consultar").format(trial.trial_id, error))
+            frames, result.feet = {}, {}
+
+    try:
+        raw = fetch_trial_frame(client, bucket, measurement, trial)
+        series = split_series(raw, trial.trial_id)
+    except Exception as error:
+        result.status, result.detail = STATUS_QUERY_ERROR, str(error)
+        logger.error(_("ERR_FLUX_QUERY: [!] Error consultando {p}: {err}").format(p=trial.codeid, err=error))
+        series = {}
+    else:
+        if not series:
+            result.status, result.detail = STATUS_EMPTY, "sin datos en el rango"
+            logger.warning(_("ERR_TRIAL_EMPTY: [-] {p}: Sin datos en el rango {s}").format(
+                p=trial.codeid, s=trial.start_iso
+            ))
+
+    payload: Dict[str, tuple[pd.DataFrame, Dict[str, Any]]] = {}
+    for side, foot in series.items():
+        frames[side] = foot.frame
+        result.feet[side] = foot.report()
+        result.signal_mem_mb += foot.frame.memory_usage(deep=True).sum() / 1e6
+        payload[side] = (foot.frame, {
+            "id": trial.trial_id, "codeid": trial.codeid, "t_code": trial.test_type,
+            "d_from": trial.d_from, "d_until": trial.d_until, "foot": side, "device": foot.device,
+        })
+    try:
+        # Publicación atómica: o quedan todos los pies del evento o no cambia nada.
+        for side, key in store.write_event(trial, payload).items():
+            result.feet[side]["key"] = key
+            logger.info(_("INFO_HDF5_SAVED: [+] Paciente {p} ({s}) guardado en HDF5: {k}").format(
+                p=trial.codeid, s=side, k=key
+            ))
+    except StorageError as error:
+        result.status, result.detail = STATUS_WRITE_ERROR, str(error)
+        logger.error(_("ERR_HDF5_WRITE: Evento {0}: {1}").format(trial.trial_id, error))
+
+    result.elapsed_s = time.perf_counter() - started
+    manifest.append({"record": "event", "run_id": run_id, "ts": datetime.now().isoformat(timespec="seconds"), **result.to_record()})
+    return result, frames
+
+
+def start_run(manifest: Manifest, command: str, total: int) -> str:
+    """Anota el inicio de una ejecución en el manifest.
+
+    Args:
+        manifest (Manifest): Manifest asociado al almacén.
+        command (str): Nombre del comando que se ejecuta.
+        total (int): Número de eventos seleccionados.
+
+    Returns:
+        str: Identificador de la ejecución.
+    """
+    run_id = uuid.uuid4().hex[:12]
+    manifest.append({
+        "record": "run_start", "run_id": run_id, "command": command, "total": total,
+        "ts": datetime.now().isoformat(timespec="seconds"),
+    })
+    return run_id
+
+
+def end_run(manifest: Manifest, run_id: str, results: Iterable[TrialResult], title: str, elapsed_s: float) -> Dict[str, int]:
+    """Anota el fin de una ejecución y muestra el resumen por estado.
+
+    Una ejecución con ``run_start`` y sin ``run_end`` quedó interrumpida.
+
+    Args:
+        manifest (Manifest): Manifest asociado al almacén.
+        run_id (str): Identificador devuelto por ``start_run``.
+        results (Iterable[TrialResult]): Resultados de todos los eventos.
+        title (str): Texto que identifica la ejecución en el resumen.
+        elapsed_s (float): Duración total de la ejecución.
+
+    Returns:
+        Dict[str, int]: Número de eventos por estado.
+    """
+    results = list(results)
+    counts = log_summary(logger, results, title)
+    manifest.append({
+        "record": "run_end", "run_id": run_id, "counts": counts, "total": len(results),
+        "elapsed_s": round(elapsed_s, 3), "ts": datetime.now().isoformat(timespec="seconds"),
+    })
+    return counts
+
 
 class GaitDataExtractor:
     """Clase para la extracción masiva y tipada de datos biomecánicos.
@@ -70,133 +176,121 @@ class GaitDataExtractor:
     y de exportar los datos a formato jerárquico HDF5 para optimizar el almacenamiento masivo.
 
     Attributes:
-        __out_dir (str): Ruta absoluta al directorio de salida.
-        __client (InfluxDBClient): Cliente de conexión a la base de datos.
-        __bucket (str): Nombre del bucket origen de los datos.
+        config (Dict[str, Any]): Configuración resuelta (YAML + entorno).
+        _out_dir (str): Ruta absoluta al directorio de salida.
+        _h5_database (str): Ruta del almacén HDF5.
+        _client (InfluxDBClient): Cliente de conexión a la base de datos.
+        _bucket (str): Nombre del bucket origen de los datos.
+        _measurement (str): Valor de ``_measurement`` consultado.
     """
     def __init__(self, config_file: str | None = None, output_folder: str | None = None) -> None:
+        """Carga la configuración y prepara cliente y rutas de salida.
+
+        Args:
+            config_file (str | None): YAML de configuración; ``None`` usa el predeterminado.
+            output_folder (str | None): Carpeta de salida que sustituye a la configurada.
+
+        Raises:
+            ConfigError: Si la configuración no es válida.
+        """
         self.config = self._load_config(config_file)
-        root = Path(__file__).resolve().parents[2]
-        folder = output_folder or self.config.get('paths', {}).get('output_folder', str(root / 'data/raw'))
-        self._out_dir = str(Path(folder).resolve())
-        self._h5_database = self.config.get('paths', {}).get('h5_path', str(Path(self._out_dir) / 'gait_study_data.h5'))
+        self._out_dir = str(Path(output_folder or self.config['paths']['output_folder']).resolve())
+        self._h5_database = self.config['paths']['h5_path']
         if output_folder is not None:
             self._h5_database = str(Path(self._out_dir) / 'gait_study_data.h5')
         Path(self._h5_database).parent.mkdir(parents=True, exist_ok=True)
         inf = self.config['influxdb']
-        self._client = InfluxDBClient(
-            url=normalize_influx_url(inf['url']), token=inf['token'], org=inf['org'],
-            timeout=inf['timeout'], verify_ssl=inf['verify_ssl'],
-        )
+        self._client = InfluxDBClient(**influx_client_options(self.config))
         self._bucket = inf['bucket']
         self._measurement = inf['measurement']
 
     def _load_config(self, config_path: str | None) -> Dict[str, Any]:
+        """Carga la configuración compartida del proyecto.
+
+        Args:
+            config_path (str | None): Ruta del YAML o ``None``.
+
+        Returns:
+            Dict[str, Any]: Configuración validada.
+        """
         return load_config(config_path)
 
-    def run_batch_extraction(self, csv_path: str | None = None, test_type: str | None = None) -> None:
-        """Ejecuta el proceso de extracción para todos los pacientes que coincidan con el test.
+    def _registry_path(self, csv_path: str | None) -> str:
+        """Resuelve la ruta del registro: argumento o configuración."""
+        return csv_path or self.config['paths']['registry_csv']
+
+    def run_batch_extraction(
+        self,
+        csv_path: str | None = None,
+        test_type: str | None = None,
+        ids: Iterable[str] | None = None,
+        missing_only: bool = False,
+    ) -> list[TrialResult]:
+        """Extrae a HDF5 los eventos seleccionados del registro.
+
+        Valida el registro completo antes de conectar, procesa los eventos de
+        forma secuencial y anota cada resultado en el manifest.
 
         Args:
-            csv_path (str): Ruta al CSV que contiene el registro de pacientes.
-            test_type (str): Código del test (ej. '6MWT') para filtrar la extracción.
+            csv_path (str | None): CSV de eventos; ``None`` usa el configurado.
+            test_type (str | None): Código del test (ej. '6MWT') o ``"all"``;
+                ``None`` usa ``batch.test_type``.
+            ids (Iterable[str] | None): Identificadores de evento a extraer.
+            missing_only (bool): Omitir los eventos ya completados según el manifest.
 
         Returns:
-            None
+            list[TrialResult]: Un resultado por fila seleccionada del registro.
+
+        Raises:
+            FileNotFoundError: Si el registro no existe.
+            RegistryError: Si al registro le faltan columnas requeridas.
+            StorageError: Si el almacén está bloqueado o tiene el esquema antiguo.
         """
-        base_path = os.path.dirname(os.path.abspath(__file__))
-        full_csv_path = csv_path or self.config.get('paths', {}).get('registry_csv', os.path.join(base_path, '..', '..', 'tests.csv'))
         test_type = test_type or self.config['batch']['test_type']
-        
-        if not os.path.exists(full_csv_path):
-            print(f"ERROR: No se encuentra el registro {full_csv_path}")
-            return
+        trials, results = load_registry(self._registry_path(csv_path), test_type, ids)
+        manifest = Manifest(manifest_path_for(self._h5_database))
+        completed = manifest.completed_keys() if missing_only else None
 
-        df_registry = pd.read_csv(full_csv_path)
-        # Filtrado dinámico según el parámetro test_type
-        subset = df_registry[df_registry['t_code'] == test_type]
-        
-        print(f"--- Iniciando extracción para test: {test_type} ---")
-        print(f"Registros encontrados: {len(subset)}")
-        
-        for idx, row in subset.iterrows():
-            self._extract_patient_data(row, idx, test_type)
+        logger.info(_("INFO_EXTRACTION_START: Extracción de {0} eventos (test: {1}) hacia {2}").format(len(trials), test_type, self._h5_database))
+        started = time.perf_counter()
+        with SignalStore(self._h5_database) as store:
+            run_id = start_run(manifest, "extract", len(trials))
+            for position, trial in enumerate(trials, start=1):
+                logger.info(_("INFO_EXTRACT_TRIAL: [{0}/{1}] Evento {2} ({3}, {4})").format(position, len(trials), trial.trial_id, trial.codeid, trial.test_type))
+                result, _frames = acquire_trial(
+                    self._client, self._bucket, self._measurement, store, manifest, trial, run_id, completed
+                )
+                logger.debug(_("DEBUG_TRIAL_COST: Evento {0}: {1:.2f} s, {2:.2f} MB").format(trial.trial_id, result.elapsed_s, result.signal_mem_mb))
+                results.append(result)
+            end_run(manifest, run_id, results, "Extracción", time.perf_counter() - started)
+        return results
 
-    def _extract_patient_data(self, row: pd.Series, idx: int, test_type: str) -> None:
-        """Consulta InfluxDB y almacena los datos en el archivo jerárquico HDF5.
-
-        Extrae las señales de forma tipada preservando metadatos críticos (Foot, DeviceName,
-        lat, lng) y particiona la persistencia en el HDF5 separando los datos por extremidad
-        para viabilizar posteriores análisis unilaterales e índices de asimetría.
+    def audit(self, csv_path: str | None = None, test_type: str | None = None) -> Dict[str, list[str]]:
+        """Compara las claves del HDF5 con el registro, sin consultar InfluxDB.
 
         Args:
-            row (pd.Series): Fila con 'codeid', 'd_from' y 'd_until'.
-            idx (int): Índice secuencial para el nombre del evento/intento.
-            test_type (str): Tipo de prueba realizada.
+            csv_path (str | None): CSV de eventos; ``None`` usa el configurado.
+            test_type (str | None): Código del test o ``"all"``; ``None`` usa
+                ``batch.test_type``.
 
         Returns:
-            None
+            Dict[str, list[str]]: Eventos ausentes, claves huérfanas, claves del
+            esquema antiguo y eventos sin confirmar en el manifest.
+
+        Raises:
+            FileNotFoundError: Si el registro no existe.
+            RegistryError: Si al registro le faltan columnas requeridas.
         """
-        p_id: str = str(row['codeid'])
-        
-        # Influx contiene hora civil de Madrid serializada como UTC.
-        start_iso = madrid_wallclock_as_influx_z(row['d_from'])
-        stop_iso = madrid_wallclock_as_influx_z(row['d_until'])
-        
-        # Corrección LR-02: Conservar 'Foot', 'DeviceName', 'lat' y 'lng'.
-        # El drop se mantiene funcional para superar los tests unitarios.
-        query = f'''
-        from(bucket: "{self._bucket}")
-          |> range(start: {start_iso}, stop: {stop_iso})
-          |> filter(fn: (r) => r["_measurement"] == "{self._measurement}")
-          |> filter(fn: (r) => r["CodeID"] == "{p_id}")
-          |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-          |> drop(columns: ["_start", "_stop", "_measurement", "result", "table", "CodeID", 
-                            "app", "mac", "type"])
-        '''
-        
-        try:
-            df = self._client.query_api().query_data_frame(query)
-            
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                df["_time"] = df["_time"].dt.tz_localize(None)
-                
-                # Búsqueda dinámica de la columna que identifica la pierna anatómica
-                col_foot = "foot" if "foot" in df.columns else "Foot" if "Foot" in df.columns else None
-                
-                if col_foot:
-                    # Iteración y guardado segregado por extremidad
-                    for foot_val, df_foot in df.groupby(col_foot):
-                        side = str(foot_val).strip().capitalize()
-                        if not side or side.lower() == "nan":
-                            side = "Unknown"
-                            
-                        # Crear la ruta jerárquica: paciente / test / evento / pie
-                        hdf_key: str = f"p_{p_id}/{test_type}/trial_{idx}/{side}"
-                        
-                        # Guardar en el almacén HDF5
-                        df_foot.to_hdf(self._h5_database, key=hdf_key, mode='a', format='table')
-                        
-                        logger.info(_("INFO_HDF5_SAVED: [+] Paciente {p} ({s}) guardado en HDF5: {k}").format(
-                            p=p_id, s=side, k=hdf_key
-                        ))
-                else:
-                    # Fallback si por algún error el sensor no envió la etiqueta Foot
-                    hdf_key: str = f"p_{p_id}/{test_type}/trial_{idx}/Unknown"
-                    df.to_hdf(self._h5_database, key=hdf_key, mode='a', format='table')
-                    
-                    logger.warning(_("WARN_MISSING_FOOT_TAG: [!] {p} guardado sin separar pie en HDF5: {k}").format(
-                        p=p_id, k=hdf_key
-                    ))
-            else:
-                logger.warning(_("ERR_TRIAL_EMPTY: [-] {p}: Sin datos en el rango {s}").format(
-                    p=p_id, s=start_iso
-                ))
-                
-        except Exception as e:
-            logger.error(_("ERR_FLUX_QUERY: [!] Error consultando {p}: {err}").format(
-                p=p_id, err=e
-            ))
+        test_type = test_type or self.config['batch']['test_type']
+        trials, _invalid = load_registry(self._registry_path(csv_path), test_type)
+        report = audit_store(self._h5_database, trials, Manifest(manifest_path_for(self._h5_database)))
+        logger.info(
+            _("INFO_AUDIT: {0} frente a {1} eventos del registro: {2} ausentes, {3} sin confirmar en el manifest, {4} claves huérfanas, {5} claves del esquema antiguo").format(self._h5_database, len(trials), len(report['missing']), len(report['unconfirmed']), len(report['orphan']), len(report['legacy']))
+        )
+        for name, values in report.items():
+            if values:
+                logger.debug(_("DEBUG_AUDIT_{0}: {1}").format(name.upper(), values))
+        return report
 
     def close(self):
         """Cierra de forma segura la conexión con el cliente de InfluxDB."""

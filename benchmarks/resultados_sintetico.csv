@@ -1,0 +1,3 @@
+caso,repeticion,pies,filas,hdf5_mb,consulta_s,consulta_pico_mb,normalizacion_s,normalizacion_pico_mb,escritura_s,escritura_pico_mb,lectura_s,lectura_pico_mb,metricas_s,metricas_pico_mb,total_s,filas_por_s
+sintético 360 s,1,2,72000,9.905,,16.2,,30.38,,42.21,,33.67,,8.76,,
+sintético 360 s,2,2,72000,9.905,0.055,,0.1864,,0.4092,,0.1893,,1.0015,,1.8414,39101.0

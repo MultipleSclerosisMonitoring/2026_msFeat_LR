@@ -117,6 +117,8 @@ def test_pipeline_and_legacy_clients_use_shared_settings(tmp_path):
         for client in (direct,legacy,inf):
             assert client.call_args.kwargs['timeout']==45000
             assert client.call_args.kwargs['verify_ssl'] is False
+        assert pg.call_count==0  # PostgreSQL se conecta al usarlo, no al construir
+        manager.pg_conn
         assert pg.call_args.kwargs['port']==5544
         pipeline.client.close()
         db.client.close()

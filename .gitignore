@@ -53,6 +53,8 @@ cover/
 
 # Translations
 *.mo
+# Los catálogos compilados del proyecto sí se versionan (scripts/traducciones.py)
+!pkgs/locales/**/*.mo
 *.pot
 
 # Django stuff:
@@ -206,10 +208,17 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-data/raw/gait_study_data.h5
+# Señales de pacientes: nunca se versionan
+data/
+data/raw/gait_study_data/
+*.h5.lock
+*.tmp-*
 
 # Token de acceso
 .config_db.yaml
 
 # Local configuration (the example is versioned)
 /config/config.yaml
+
+# pdf de dudas
+DUDAS.pdf

@@ -347,3 +347,457 @@ msgstr "All CodeIDs processed successfully."
 
 #~ msgid "ARG_LIST_ACT_ALL_IDS"
 #~ msgstr "List of IDs from PostgreSQL activity_all"
+
+# --- Mensajes del pipeline (el identificador es el texto en español del código) ---
+
+#: pipeline_test.py
+msgid "ERR_NO_DATA_PROCESSED: No se generaron datos para ningún ensayo clínico."
+msgstr "ERR_NO_DATA_PROCESSED: No data was generated for any clinical trial."
+
+#: pipeline_test.py
+msgid "ERR_NO_VALID_METRICS: Ningún evento tiene métricas con valor; el Excel solo contiene estados."
+msgstr "ERR_NO_VALID_METRICS: No event has any metric with a value; the workbook only contains statuses."
+
+#: pipeline_test.py
+msgid "WARN_NO_NUMERIC_STATS: No hay suficientes datos numéricos para Estadísticas Globales."
+msgstr "WARN_NO_NUMERIC_STATS: Not enough numeric data for the global statistics."
+
+#: pipeline_test.py
+msgid "INFO_PATIENT_AGGREGATION: {0} pacientes agregados; {1} combinaciones paciente-test con ensayos repetidos ({2})"
+msgstr "INFO_PATIENT_AGGREGATION: {0} patients aggregated; {1} patient-test combinations with repeated trials ({2})"
+
+#: pipeline_test.py
+msgid "DEBUG_PROVENANCE: commit {0}, configuración {1}, registro {2}"
+msgstr "DEBUG_PROVENANCE: commit {0}, configuration {1}, registry {2}"
+
+#: pipeline_test.py
+msgid "INFO_AUDIT: {0} frente a {1} eventos del registro: {2} ausentes, {3} sin confirmar en el manifest, {4} claves huérfanas, {5} almacenes del formato anterior"
+msgstr "INFO_AUDIT: {0} against {1} registry events: {2} missing, {3} not confirmed in the manifest, {4} orphan keys, {5} stores in the previous format"
+
+#: pipeline_test.py
+msgid "INFO_TRIALS_PROCESSED: {0} de {1} eventos con señales tienen al menos una métrica con valor ({2} filas del registro seleccionadas)"
+msgstr "INFO_TRIALS_PROCESSED: {0} of {1} events with signals have at least one metric with a value ({2} registry rows selected)"
+
+#: pipeline_test.py
+msgid "INFO_PIPELINE_COMPLETED: Pipeline finalizado. Excel generado ({out})."
+msgstr "INFO_PIPELINE_COMPLETED: Pipeline finished. Workbook written ({out})."
+
+#: pipeline_test.py
+msgid "DEBUG_GEOMETRY_WARN: Excursión inusualmente baja en paciente {p} ({s}) evento {tid}"
+msgstr "DEBUG_GEOMETRY_WARN: Unusually low excursion for patient {p} ({s}) event {tid}"
+
+#: pipeline_test.py
+msgid "DEBUG_GEOMETRY_WARN: Altura atípica en paciente {p} ({s}) evento {tid}"
+msgstr "DEBUG_GEOMETRY_WARN: Atypical height for patient {p} ({s}) event {tid}"
+
+#: pipeline_test.py
+msgid "DEBUG_NO_BILATERAL: Evento {0} sin cadencia válida en ambos pies; asimetría no calculada"
+msgstr "DEBUG_NO_BILATERAL: Event {0} has no valid cadence for both feet; asymmetry not computed"
+
+#: pipeline_test.py
+msgid "DEBUG_REPEATED_TRIALS: Paciente {0} ({1}): eventos {2}; {3} bilaterales"
+msgstr "DEBUG_REPEATED_TRIALS: Patient {0} ({1}): events {2}; {3} bilateral"
+
+#: pipeline_test.py
+msgid "INFO_STORED_ONLY: {0} eventos se recalculan desde el almacén; {1} no están almacenados y se omiten sin consultar"
+msgstr "INFO_STORED_ONLY: {0} events are recomputed from the store; {1} are not stored and are skipped without querying"
+
+#: pipeline_test.py
+msgid "WARN_FS_MISMATCH: {0} de {1} series tienen una frecuencia efectiva (~{2} Hz) alejada de la nominal processing.fs={3:g} Hz. Las métricas usan la frecuencia medida; revise la configuración."
+msgstr "WARN_FS_MISMATCH: {0} of {1} series have an effective rate (~{2} Hz) far from the nominal processing.fs={3:g} Hz. Metrics use the measured rate; check the configuration."
+
+#: pipeline_test.py
+msgid "DEBUG_METRIC_STATUS: Evento {0} ({1}) {2}: {3} ({4})"
+msgstr "DEBUG_METRIC_STATUS: Event {0} ({1}) {2}: {3} ({4})"
+
+#: pipeline_test.py
+msgid "DEBUG_ASYMMETRY_DETECTED: Alta asimetría en evento {tid} paciente {p} ({si}%)"
+msgstr "DEBUG_ASYMMETRY_DETECTED: High asymmetry in event {tid} patient {p} ({si}%)"
+
+#: pipeline_test.py
+msgid "DEBUG_AUDIT_{0}: {1}"
+msgstr "DEBUG_AUDIT_{0}: {1}"
+
+#: pipeline_test.py
+msgid "DEBUG_TRIAL_COST: Evento {0}: {1:.2f} s, {2:.2f} MB"
+msgstr "DEBUG_TRIAL_COST: Event {0}: {1:.2f} s, {2:.2f} MB"
+
+#: pipeline_test.py
+msgid "INFO_INGEST_TRIAL: [{cid}] - Ingestando evento {tid} ({tt}) desde InfluxDB..."
+msgstr "INFO_INGEST_TRIAL: [{cid}] - Ingesting event {tid} ({tt}) from InfluxDB..."
+
+#: pipeline_test.py
+msgid " [{0}/{1}]"
+msgstr " [{0}/{1}]"
+
+#: pipeline_test.py
+msgid "WARN_MISSING_FOOT_TAG: [{cid}] - No se encontró la etiqueta de pierna en evento {tid}"
+msgstr "WARN_MISSING_FOOT_TAG: [{cid}] - No foot tag found in event {tid}"
+
+#: GaitMetricsCalculator.py
+msgid "processing.pressure_stance_is_low debe ser true o false."
+msgstr "processing.pressure_stance_is_low must be true or false."
+
+#: GaitMetricsCalculator.py
+msgid "processing.max_gap_s debe ser mayor que el intervalo nominal entre muestras."
+msgstr "processing.max_gap_s must be greater than the nominal sampling interval."
+
+#: GaitMetricsCalculator.py
+msgid "processing.min_coverage debe estar entre 0 y 1."
+msgstr "processing.min_coverage must be between 0 and 1."
+
+#: GaitMetricsCalculator.py
+msgid "processing.decay_min_duration_s debe ser al menos el doble de processing.decay_block_s."
+msgstr "processing.decay_min_duration_s must be at least twice processing.decay_block_s."
+
+#: GaitMetricsCalculator.py
+msgid "DEBUG_SIGNAL_PREPARED: {0} muestras, fs efectiva {1:.2f} Hz (nominal {2:g}), {3} huecos ({4:.2f} s), {5} muestras interpoladas, irregularidad temporal {6:.0%}"
+msgstr "DEBUG_SIGNAL_PREPARED: {0} samples, effective fs {1:.2f} Hz (nominal {2:g}), {3} gaps ({4:.2f} s), {5} interpolated samples, timing irregularity {6:.0%}"
+
+#: GaitMetricsCalculator.py
+msgid "processing.turn_axis debe ser uno de {0}."
+msgstr "processing.turn_axis must be one of {0}."
+
+#: GaitMetricsCalculator.py
+msgid "processing.step_modality debe ser uno de {0}."
+msgstr "processing.step_modality must be one of {0}."
+
+#: GaitMetricsCalculator.py
+msgid "Claves desconocidas en processing: {0}."
+msgstr "Unknown keys in processing: {0}."
+
+#: GaitMetricsCalculator.py
+msgid "DEBUG_NO_STEADY_GAIT: {0:.2f} s de marcha estable tras {1} s de giros (mínimo {2} s); cadencia no calculada"
+msgstr "DEBUG_NO_STEADY_GAIT: {0:.2f} s of steady gait after {1} s of turns (minimum {2} s); cadence not computed"
+
+#: GaitMetricsCalculator.py
+msgid "WARN_BIOMECH_OUT_OF_BOUNDS: Cadencia inverosímil detectada ({cad} ppm) en prueba de duración válida (>30s)."
+msgstr "WARN_BIOMECH_OUT_OF_BOUNDS: Implausible cadence detected ({cad} per minute) in a trial of valid duration (>30 s)."
+
+#: GaitMetricsCalculator.py
+msgid "processing.{0} debe ser un número finito mayor que cero."
+msgstr "processing.{0} must be a finite number greater than zero."
+
+#: GaitMetricsCalculator.py
+msgid "processing.{0} debe ser un entero."
+msgstr "processing.{0} must be an integer."
+
+#: GaitMetricsCalculator.py
+msgid "processing.{0} debe ser menor que la frecuencia de Nyquist ({1} Hz)."
+msgstr "processing.{0} must be lower than the Nyquist frequency ({1} Hz)."
+
+#: GaitMetricsCalculator.py
+msgid "processing.{0} debe ser menor que processing.{1}."
+msgstr "processing.{0} must be lower than processing.{1}."
+
+#: GaitMetricsCalculator.py
+msgid "INFO_BIOMECH_RESCUE: Fusión de sensores activada. Pasos rescatados con S0 ({p})"
+msgstr "INFO_BIOMECH_RESCUE: Sensor fusion enabled. Steps recovered from S0 ({p})"
+
+#: graficas_tfg.py
+msgid "INFO_START_PLOTTING: Generando batería dinámica de gráficas..."
+msgstr "INFO_START_PLOTTING: Generating the set of figures..."
+
+#: graficas_tfg.py
+msgid "Índice de Simetría (%)"
+msgstr "Symmetry index (%)"
+
+#: graficas_tfg.py
+msgid "Frecuencia"
+msgstr "Count"
+
+#: graficas_tfg.py
+msgid "Cadencia (por minuto)"
+msgstr "Cadence (per minute)"
+
+#: graficas_tfg.py
+msgid "Porcentaje Fase de Apoyo (%)"
+msgstr "Stance phase (%)"
+
+#: graficas_tfg.py
+msgid "INFO_END_PLOTTING: Proceso finalizado. Gráficas estructuradas por carpetas."
+msgstr "INFO_END_PLOTTING: Done. Figures organised in folders."
+
+#: graficas_tfg.py
+msgid "INFO_DATA_LOADED: Datos cargados. Columnas detectadas: {c}"
+msgstr "INFO_DATA_LOADED: Data loaded. Columns found: {c}"
+
+#: graficas_tfg.py
+msgid "DEBUG_DATA_SCOPE: {0} pacientes, {1} series de ensayo, tests {2}"
+msgstr "DEBUG_DATA_SCOPE: {0} patients, {1} trial series, tests {2}"
+
+#: graficas_tfg.py
+msgid "DEBUG_PLOT_SAVED: {f}"
+msgstr "DEBUG_PLOT_SAVED: {f}"
+
+#: graficas_tfg.py
+msgid "Referencia (10 %)"
+msgstr "Reference (10 %)"
+
+#: graficas_tfg.py
+msgid "Pie"
+msgstr "Foot"
+
+#: graficas_tfg.py
+msgid "DEBUG_DIR_CREATED: Directorio base creado en {d}"
+msgstr "DEBUG_DIR_CREATED: Base directory created at {d}"
+
+#: graficas_tfg.py
+msgid "ERR_DATA_FORMAT: A {0} le faltan las hojas {1}. Regenere el Excel con pipeline_test.py."
+msgstr "ERR_DATA_FORMAT: {0} lacks the sheets {1}. Regenerate the workbook with pipeline_test.py."
+
+#: graficas_tfg.py
+msgid "Distribución de {t} entre Pruebas Clínicas"
+msgstr "Distribution of {t} across clinical tests"
+
+#: graficas_tfg.py
+msgid "Distribución de Asimetría - {t}"
+msgstr "Asymmetry distribution - {t}"
+
+#: graficas_tfg.py
+msgid "DEBUG_CORRELATION_PAIRS: {0}: {1} de {2} pares calculados (n >= {3}); {4} con FDR < {5}"
+msgstr "DEBUG_CORRELATION_PAIRS: {0}: {1} of {2} pairs computed (n >= {3}); {4} with FDR < {5}"
+
+#: graficas_tfg.py
+msgid "Cadencia frente a Fase de Apoyo ({t})"
+msgstr "Cadence versus stance phase ({t})"
+
+#: graficas_tfg.py
+msgid "ERR_DATA_LOAD: Fallo al cargar datos - {err}"
+msgstr "ERR_DATA_LOAD: Failed to load data - {err}"
+
+#: graficas_tfg.py
+msgid "DEBUG_PLOT_SKIP: Boxplot de {0}: columnas con n < {1} omitidas: {2}"
+msgstr "DEBUG_PLOT_SKIP: Boxplot of {0}: columns with n < {1} skipped: {2}"
+
+#: graficas_tfg.py
+msgid "DEBUG_PLOT_SKIP: Omitiendo KDE para {c} por falta de datos (n={n})"
+msgstr "DEBUG_PLOT_SKIP: Skipping KDE for {c}: not enough data (n={n})"
+
+#: graficas_tfg.py
+msgid "DEBUG_PLOT_SKIP: Omitiendo correlación para {t} por falta de datos completos (n={n})"
+msgstr "DEBUG_PLOT_SKIP: Skipping correlation for {t}: not enough complete data (n={n})"
+
+#: graficas_tfg.py
+msgid "Matriz de Correlación: {t}"
+msgstr "Correlation matrix: {t}"
+
+#: graficas_tfg.py
+msgid "DEBUG_PLOT_SKIP: Omitiendo Scatter para {t} por falta de datos coherentes"
+msgstr "DEBUG_PLOT_SKIP: Skipping scatter plot for {t}: not enough consistent data"
+
+#: src/gait_analysis/extractor.py
+msgid "INFO_EXTRACTION_START: Extracción de {0} eventos (test: {1}) hacia {2}"
+msgstr "INFO_EXTRACTION_START: Extracting {0} events (test: {1}) into {2}"
+
+#: src/gait_analysis/extractor.py
+msgid "INFO_AUDIT: {0} frente a {1} eventos del registro: {2} ausentes, {3} sin confirmar en el manifest, {4} claves huérfanas, {5} claves del esquema antiguo"
+msgstr "INFO_AUDIT: {0} against {1} registry events: {2} missing, {3} not confirmed in the manifest, {4} orphan keys, {5} keys in the old layout"
+
+#: src/gait_analysis/extractor.py
+msgid "DEBUG_TRIAL_SKIPPED: Evento {0} ya completado; no se consulta"
+msgstr "DEBUG_TRIAL_SKIPPED: Event {0} already completed; not queried"
+
+#: src/gait_analysis/extractor.py
+msgid "DEBUG_TRIAL_REUSED: Evento {0} leído del HDF5; no se consulta"
+msgstr "DEBUG_TRIAL_REUSED: Event {0} read from HDF5; not queried"
+
+#: src/gait_analysis/extractor.py
+msgid "ERR_FLUX_QUERY: [!] Error consultando {p}: {err}"
+msgstr "ERR_FLUX_QUERY: [!] Error querying {p}: {err}"
+
+#: src/gait_analysis/extractor.py
+msgid "ERR_TRIAL_EMPTY: [-] {p}: Sin datos en el rango {s}"
+msgstr "ERR_TRIAL_EMPTY: [-] {p}: No data in the range {s}"
+
+#: src/gait_analysis/extractor.py
+msgid "INFO_HDF5_SAVED: [+] Paciente {p} ({s}) guardado en HDF5: {k}"
+msgstr "INFO_HDF5_SAVED: [+] Patient {p} ({s}) saved to HDF5: {k}"
+
+#: src/gait_analysis/extractor.py
+msgid "ERR_HDF5_WRITE: Evento {0}: {1}"
+msgstr "ERR_HDF5_WRITE: Event {0}: {1}"
+
+#: src/gait_analysis/extractor.py
+msgid "WARN_STORED_UNREADABLE: Evento {0} no legible en HDF5 ({1}); se vuelve a consultar"
+msgstr "WARN_STORED_UNREADABLE: Event {0} cannot be read from HDF5 ({1}); it will be queried again"
+
+#: src/gait_analysis/extractor.py
+msgid "INFO_EXTRACT_TRIAL: [{0}/{1}] Evento {2} ({3}, {4})"
+msgstr "INFO_EXTRACT_TRIAL: [{0}/{1}] Event {2} ({3}, {4})"
+
+#: src/gait_analysis/logging_utils.py
+msgid "INFO_RUN_SUMMARY: {0}: {1} eventos ({2})"
+msgstr "INFO_RUN_SUMMARY: {0}: {1} events ({2})"
+
+#: src/gait_analysis/query.py
+msgid "La respuesta de InfluxDB no contiene la columna _time"
+msgstr "The InfluxDB response has no _time column"
+
+#: src/gait_analysis/query.py
+msgid "DEBUG_QUERY_TABLES: Respuesta con {0} tabla(s) y {1} filas"
+msgstr "DEBUG_QUERY_TABLES: Response with {0} table(s) and {1} rows"
+
+#: src/gait_analysis/query.py
+msgid "La respuesta de InfluxDB contiene elementos que no son DataFrame"
+msgstr "The InfluxDB response contains items that are not DataFrames"
+
+#: src/gait_analysis/query.py
+msgid "WARN_DUPLICATE_SAMPLES: Evento {0} ({1}): eliminadas {2} filas idénticas y {3} con _time repetido y valores distintos (se conserva la primera)"
+msgstr "WARN_DUPLICATE_SAMPLES: Event {0} ({1}): removed {2} identical rows and {3} with a repeated _time and different values (the first one is kept)"
+
+#: src/gait_analysis/query.py
+msgid "DEBUG_SERIES_SORTED: Evento {0} ({1}) llegó desordenado y se ordenó por _time"
+msgstr "DEBUG_SERIES_SORTED: Event {0} ({1}) arrived unsorted and was sorted by _time"
+
+#: src/gait_analysis/query.py
+msgid "La serie {0} del evento {1} no es estrictamente creciente en _time"
+msgstr "Series {0} of event {1} is not strictly increasing in _time"
+
+#: src/gait_analysis/query.py
+msgid "WARN_MISSING_FOOT_TAG: Evento {0} sin etiqueta de pie; se trata como '{1}'"
+msgstr "WARN_MISSING_FOOT_TAG: Event {0} has no foot tag; treated as '{1}'"
+
+#: src/gait_analysis/query.py
+msgid "Respuesta de InfluxDB de tipo no previsto: {0}"
+msgstr "Unexpected InfluxDB response type: {0}"
+
+#: src/gait_analysis/query.py
+msgid "WARN_MULTIPLE_DEVICES: Evento {0} ({1}) con {2} dispositivos {3}; se conserva '{4}'"
+msgstr "WARN_MULTIPLE_DEVICES: Event {0} ({1}) has {2} devices {3}; '{4}' is kept"
+
+#: src/gait_analysis/registry.py
+msgid "INFO_REGISTRY_LOADED: Registro validado ({0} filas): {1} eventos válidos seleccionados, {2} filas inválidas seleccionadas, {3} inválidas fuera de la selección"
+msgstr "INFO_REGISTRY_LOADED: Registry validated ({0} rows): {1} valid events selected, {2} invalid rows selected, {3} invalid rows outside the selection"
+
+#: src/gait_analysis/registry.py
+msgid "No se encuentra el registro {0}"
+msgstr "Registry {0} not found"
+
+#: src/gait_analysis/registry.py
+msgid "Al registro le faltan columnas requeridas: {0}"
+msgstr "The registry lacks required columns: {0}"
+
+#: src/gait_analysis/registry.py
+msgid "El registro {0} no es un CSV legible: {1}"
+msgstr "Registry {0} is not a readable CSV: {1}"
+
+#: src/gait_analysis/registry.py
+msgid "WARN_INVALID_ROW: Fila {0} del registro (id='{1}') descartada: {2}"
+msgstr "WARN_INVALID_ROW: Registry row {0} (id='{1}') discarded: {2}"
+
+#: src/gait_analysis/registry.py
+msgid "WARN_IDS_NOT_FOUND: Identificadores pedidos que no están en el registro: {0}"
+msgstr "WARN_IDS_NOT_FOUND: Requested identifiers that are not in the registry: {0}"
+
+#: src/gait_analysis/registry.py
+msgid "INFO_INVALID_ROW_UNSELECTED: Fila {0} del registro (id='{1}'), fuera de la selección, no es válida: {2}"
+msgstr "INFO_INVALID_ROW_UNSELECTED: Registry row {0} (id='{1}'), outside the selection, is not valid: {2}"
+
+#: src/gait_analysis/storage.py
+msgid "El almacén debe abrirse con 'with' antes de escribir."
+msgstr "The store must be opened with 'with' before writing."
+
+#: src/gait_analysis/storage.py
+msgid "DEBUG_EXCEL_PUBLISHED: {0} verificado y publicado ({1} hojas)"
+msgstr "DEBUG_EXCEL_PUBLISHED: {0} verified and published ({1} sheets)"
+
+#: src/gait_analysis/storage.py
+msgid "Clave no válida: {0}"
+msgstr "Invalid key: {0}"
+
+#: src/gait_analysis/storage.py
+msgid "No se pudo adquirir el bloqueo {0}."
+msgstr "Could not acquire the lock {0}."
+
+#: src/gait_analysis/storage.py
+msgid "DEBUG_HDF5_VERIFIED: {0} verificado y publicado ({1})"
+msgstr "DEBUG_HDF5_VERIFIED: {0} verified and published ({1})"
+
+#: src/gait_analysis/storage.py
+msgid "WARN_TEMPORARY_REMOVED: Se elimina el temporal de una ejecución interrumpida: {0}"
+msgstr "WARN_TEMPORARY_REMOVED: Removing the temporary file of an interrupted run: {0}"
+
+#: src/gait_analysis/storage.py
+msgid "WARN_LEGACY_STORE: {0} es un almacén del formato anterior (un solo archivo); no se usa. Los eventos se guardan en {1}"
+msgstr "WARN_LEGACY_STORE: {0} is a store in the previous format (single file); it is not used. Events are saved in {1}"
+
+#: src/gait_analysis/storage.py
+msgid "No se pudo publicar {0}: {1}"
+msgstr "Could not publish {0}: {1}"
+
+#: src/gait_analysis/storage.py
+msgid "WARN_EVENT_FILE_UNREADABLE: {0} no se puede leer ({1}); se ignora"
+msgstr "WARN_EVENT_FILE_UNREADABLE: {0} cannot be read ({1}); ignored"
+
+#: src/gait_analysis/storage.py
+msgid "No se pudo escribir el evento {0}: {1}"
+msgstr "Could not write event {0}: {1}"
+
+#: src/gait_analysis/storage.py
+msgid "Verificación fallida en la hoja '{0}' de {1}"
+msgstr "Verification failed for sheet '{0}' of {1}"
+
+#: src/gait_analysis/storage.py
+msgid "WARN_STALE_LOCK: Bloqueo huérfano del proceso {0}, que ya no existe; se retira {1}"
+msgstr "WARN_STALE_LOCK: Stale lock from process {0}, which no longer exists; removing {1}"
+
+#: src/gait_analysis/storage.py
+msgid "El almacén está bloqueado por otra ejecución ({0}, proceso {1})."
+msgstr "The store is locked by another run ({0}, process {1})."
+
+#: src/gait_analysis/storage.py
+msgid "WARN_MANIFEST_LINE: Línea {0} ilegible en {1}; se ignora"
+msgstr "WARN_MANIFEST_LINE: Unreadable line {0} in {1}; ignored"
+
+#: src/gait_analysis/storage.py
+msgid "Verificación fallida en {0}: {1} filas leídas de {2} enviadas"
+msgstr "Verification failed for {0}: {1} rows read of {2} sent"
+
+#: scripts/migrar_hdf5_antiguo.py
+msgid "INFO_MIGRATION_SUMMARY: {0} claves del archivo antiguo ({1}):"
+msgstr "INFO_MIGRATION_SUMMARY: {0} keys in the old file ({1}):"
+
+#: scripts/migrar_hdf5_antiguo.py
+msgid "No se encuentra el archivo antiguo {0}"
+msgstr "Old file {0} not found"
+
+#: scripts/migrar_hdf5_antiguo.py
+msgid "INFO_MIGRATION_SUMMARY:   {0:4d}  {1}"
+msgstr "INFO_MIGRATION_SUMMARY:   {0:4d}  {1}"
+
+#: scripts/migrar_hdf5_antiguo.py
+msgid "DEBUG_MIGRATION_KEY: [{0}/{1}] {2} → {3} {4}"
+msgstr "DEBUG_MIGRATION_KEY: [{0}/{1}] {2} → {3} {4}"
+
+#: scripts/migrar_hdf5_antiguo.py
+msgid "WARN_MIGRATION_REJECTED: {0}: {1}"
+msgstr "WARN_MIGRATION_REJECTED: {0}: {1}"
+
+#: scripts/migrar_hdf5_antiguo.py
+msgid "INFO_MIGRATION_PROGRESS: {0}/{1} claves revisadas"
+msgstr "INFO_MIGRATION_PROGRESS: {0}/{1} keys checked"
+
+#: benchmarks/benchmark_pipeline.py
+msgid "INFO_BENCH_SUMMARY: Mediana por caso (tiempos en segundos):\n"
+msgstr "INFO_BENCH_SUMMARY: Median per case (times in seconds):\n"
+
+#: benchmarks/benchmark_pipeline.py
+msgid "INFO_BENCH_MEMORY: Pico de memoria por etapa (MB):\n"
+msgstr "INFO_BENCH_MEMORY: Peak memory per stage (MB):\n"
+
+#: benchmarks/benchmark_pipeline.py
+msgid "DEBUG_BENCH_EVENT: {0}"
+msgstr "DEBUG_BENCH_EVENT: {0}"
+
+#: benchmarks/benchmark_pipeline.py
+msgid "INFO_BENCH_SAVED: Medidas completas en {0}"
+msgstr "INFO_BENCH_SAVED: Full measurements in {0}"
+
+#: benchmarks/benchmark_pipeline.py
+msgid "INFO_BENCH_CASE: Caso {0}, repetición {1}/{2}"
+msgstr "INFO_BENCH_CASE: Case {0}, repetition {1}/{2}"
+
+#: benchmarks/benchmark_pipeline.py
+msgid "INFO_BENCH_CASE: Evento {0}, repetición {1}/{2}"
+msgstr "INFO_BENCH_CASE: Event {0}, repetition {1}/{2}"

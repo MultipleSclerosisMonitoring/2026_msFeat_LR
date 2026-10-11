@@ -175,8 +175,10 @@ def init_translation(
 
     _translation = trans
     trans.install()         # installs _ into builtins
-    _ = trans.gettext       # refresh local module alias
-    ngettext = trans.ngettext
+    # The module aliases stay bound to the dynamic proxies below, so a name
+    # imported before or after this call always follows the active language.
+    _ = gettext
+    ngettext = ngettext_proxy
 
     return trans
 
@@ -233,6 +235,23 @@ def gettext(message: str) -> str:
     return message
 
 
-# Keep module-level alias for compatibility with code that imported `_` early
+def ngettext_proxy(singular: str, plural: str, n: int) -> str:
+    """Translate a message with plural forms using the active catalog.
+
+    Args:
+        singular: Source message for one item.
+        plural: Source message for several items.
+        n: Number of items.
+
+    Returns:
+        The translated form if a catalog is active; otherwise the source form.
+    """
+    if _translation:
+        return _translation.ngettext(singular, plural, n)
+    return singular if n == 1 else plural
+
+
+# Module-level aliases always look up the active catalog at call time
 _ = gettext
+ngettext = ngettext_proxy
 

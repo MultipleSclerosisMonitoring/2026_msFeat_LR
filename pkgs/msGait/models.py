@@ -10,6 +10,13 @@ class EffectiveMovement(BaseModel):
     leg: str  # "Left" or "Right"
 
 
+class EffectiveGait(BaseModel):
+    codeid_id: int
+    start_time: str  # ISO 8601 timestamp
+    end_time: str  # ISO 8601 timestamp
+    duration: float
+
+
 class ActivitySegment(BaseModel):
     codeid_id: int
     foot: str  # "Left" or "Right"

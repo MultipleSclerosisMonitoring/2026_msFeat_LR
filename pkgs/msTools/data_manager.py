@@ -1,64 +1,69 @@
 import pandas as pd
 from influxdb_client import InfluxDBClient
 import psycopg2
-from msConfig import load_config
+from msConfig import influx_client_options, load_config
 from msTools.models import CodeID, ActivityLeg, ActivityAll
 from msTools import i18n
 from msTools.timeutils import ensure_utc, influx_wallclock_z
-from msGait.models import EffectiveMovement, ActivitySegment
+from msTools.flux import flux_range, flux_string
+from msGait.models import EffectiveMovement, EffectiveGait, ActivitySegment
 from pydantic import ValidationError
 from typing import List, Dict, Optional, Tuple
 from psycopg2 import sql
 import datetime
-import urllib3
-from urllib.parse import urlparse, urlunparse
+import logging
 
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+logger = logging.getLogger("msGait.DataManager")
 
-INFLUX_IP_HOST = "138.100.82.178"
-INFLUX_CERT_HOST = "apiivm78.etsii.upm.es"
-
-
-def normalize_influx_url(url: str) -> str:
-    parsed = urlparse(url)
-    if parsed.hostname != INFLUX_IP_HOST:
-        return url
-    netloc = INFLUX_CERT_HOST
-    if parsed.port:
-        netloc = f"{netloc}:{parsed.port}"
-    return urlunparse(parsed._replace(netloc=netloc))
-
+# Modelo de validación de cada tabla en la que se permite escribir.
+TABLE_MODELS = {
+    "activity_leg": ActivityLeg, "effective_movement": EffectiveMovement, "activity_all": ActivityAll,
+    "fullref_sensor_codeid": ActivitySegment, "effective_gait": EffectiveGait, "codeids": CodeID,
+}
 
 class DataManager:
     def __init__(self, config_path: str, ids: list = None) -> None:
         """
-        Initializes the DataManager with connections to InfluxDB and PostgreSQL.
+        Initializes the DataManager with its InfluxDB client.
+
+        The PostgreSQL connection is independent: it is opened the first time
+        ``pg_conn`` is used, so InfluxDB-only tasks do not need PostgreSQL.
 
         :param config_path: Path to the YAML configuration file.
         :type config_path: str
         """
+        self._pg_conn = None
+        self.influxdb_client = None
         self.config = self.load_config(config_path)
         self.ids = ids
-        
-        # Configure PostgreSQL connection
-        self.pg_conn = self._connect_postgresql()
 
         # Configure InfluxDB client
-        self.influxdb_client = InfluxDBClient(
-            url=normalize_influx_url(self.config["influxdb"]["url"]),
-            token=self.config["influxdb"]["token"],
-            org=self.config["influxdb"]["org"],
-            timeout=self.config["influxdb"].get("timeout") or 30000,
-            verify_ssl=self.config["influxdb"]["verify_ssl"],
-        )
+        self.influxdb_client = InfluxDBClient(**influx_client_options(self.config))
         self.bucket: str = self.config["influxdb"]["bucket"]
         self.measurement: str = self.config['influxdb']['measurement']
 
     def __del__(self)-> None:
-        """Ensure all connections are closed on deletion."""
-        self.close_influxdb()
-        self.close_pg()
+        """Ensure all connections are closed on deletion, even after a partial construction."""
+        try:
+            self.close_all()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "DataManager":
+        """Allows ``with DataManager(...) as dm:``; connections are closed on exit."""
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        """Closes both connections."""
+        self.close_all()
+
+    @property
+    def pg_conn(self) -> psycopg2.extensions.connection:
+        """PostgreSQL connection, opened on first use and reopened if it was closed."""
+        if self._pg_conn is None or self._pg_conn.closed:
+            self._pg_conn = self._connect_postgresql()
+        return self._pg_conn
 
     def load_config(self, config_path: str) -> Dict:
         """
@@ -92,30 +97,45 @@ class DataManager:
         :return: psycopg2 connection object.
         :rtype: psycopg2.extensions.connection
         """
+        pg = self.config.get("postgresql")
+        if not pg:
+            raise ValueError("Falta la sección postgresql en la configuración.")
+        options = {}
+        # Timeout de conexión opcional (segundos): solo se aplica si está configurado.
+        if pg.get("connect_timeout") is not None:
+            options["connect_timeout"] = int(pg["connect_timeout"])
         try:
             return psycopg2.connect(
-                host=self.config["postgresql"]["host"],
-                database=self.config["postgresql"]["database"],
-                user=self.config["postgresql"]["user"],
-                password=self.config["postgresql"]["password"],
-                port=self.config["postgresql"]["port"]
+                host=pg["host"],
+                database=pg["database"],
+                user=pg["user"],
+                password=pg["password"],
+                port=pg["port"],
+                **options,
             )
         except psycopg2.OperationalError as e:
-            print(i18n._("PGSQL-CONN-ERR").format(e=e))
+            logger.error(i18n._("PGSQL-CONN-ERR").format(e=e))
             raise
 
     def close_pg(self) -> None:
-        """Closes the PostgreSQL connection."""
-        self.pg_conn.close()
+        """Closes the PostgreSQL connection if it was opened."""
+        connection = getattr(self, "_pg_conn", None)
+        if connection is not None and not connection.closed:
+            connection.close()
+        self._pg_conn = None
 
     def close_influxdb(self) -> None:
-        """Closes the InfluxDB client."""
-        self.influxdb_client.close()
+        """Closes the InfluxDB client if it was created."""
+        client = getattr(self, "influxdb_client", None)
+        if client is not None:
+            client.close()
 
     def close_all(self) -> None:
         """Closes both PostgreSQL and InfluxDB connections."""
-        self.pg_conn.close()
-        self.influxdb_client.close()
+        try:
+            self.close_pg()
+        finally:
+            self.close_influxdb()
 
     def get_influx_client(self) -> InfluxDBClient:
         """
@@ -175,9 +195,9 @@ class DataManager:
             end_iso = influx_wallclock_z(end_datetime)
 
             query = f'''
-            from(bucket: "{self.bucket}")
-                |> range(start: {start_iso}, stop: {end_iso})
-                |> filter(fn: (r) => r._measurement == "{self.measurement}")
+            from(bucket: {flux_string(self.bucket)})
+                |> range({flux_range(start_iso, end_iso)})
+                |> filter(fn: (r) => r._measurement == {flux_string(self.measurement)})
                 |> keep(columns: ["CodeID"])
                 |> distinct()
             '''
@@ -209,12 +229,20 @@ class DataManager:
                 else:
                     cursor.execute(query)
                     
-                columns = [desc[0] for desc in cursor.description] 
-                data = cursor.fetchall() 
+                columns = [desc[0] for desc in cursor.description]
+                data = cursor.fetchall()
                 return pd.DataFrame(data, columns=columns)
         except Exception as e:
-            print(i18n._("PGSQL-QRY-GEN-ERR").format(e=e))
+            # Una lectura fallida deja la transacción abortada: se deshace antes de propagar.
+            self._rollback()
+            logger.error(i18n._("PGSQL-QRY-GEN-ERR").format(e=e))
             raise
+
+    def _rollback(self) -> None:
+        """Rolls back the current transaction if a connection is open."""
+        connection = getattr(self, "_pg_conn", None)
+        if connection is not None and not connection.closed:
+            connection.rollback()
 
     def segments_retrieval(
         self,
@@ -291,9 +319,7 @@ class DataManager:
             if vb > 1:
                 print(i18n._("VB_REG_ACT_ALL").format(row=row))
             for i, foot in enumerate(row["active_legs"]):
-                sql = "SELECT codeid from codeids where id='" + \
-                    str(row["codeid_ids"][i]) + "'"
-                cid = self.fetch_data(sql)
+                cid = self.fetch_data("SELECT codeid FROM codeids WHERE id = %s;", (int(row["codeid_ids"][i]),))
                 activity_leg_like.append({
                     "start_time": row["start_time"], "end_time": row["end_time"],
                     "codeid_id": row["codeid_ids"][i], "CodeID": cid['codeid'][0],
@@ -333,9 +359,9 @@ class DataManager:
                     return new_id, True
                 
                 cursor.execute("SELECT id FROM codeids WHERE codeid = %s;", (validated_codeid.codeid,))
+                existing_id = cursor.fetchone()[0]
                 if verbose >= 2:
                     print(i18n._("INFO_CODEID_EXIST").format(codeid=codeid, id=existing_id))
-                existing_id = cursor.fetchone()[0]
                 return existing_id, False
         except ValidationError as e:
             print(i18n._("PGSQL-VAL-COD-ERR").format(e=e))
@@ -349,6 +375,8 @@ class DataManager:
         """
         Transforms a pandas DataFrame moving time columns to ISO string,
         and CodeID to codeid_id by quering the codeids table.
+
+        The input DataFrame is not modified: the transformation works on a copy.
 
         :param data:  Activity_Leg pandas.
         :type data: pd.DataFrame
@@ -368,6 +396,7 @@ class DataManager:
                 cursor.execute("SELECT id FROM codeids WHERE codeid = %s;", (codeid,))
                 return cursor.fetchone()[0] 
         #
+        data = data.copy()
         data['start_time'] = data['time_from'].apply(lambda x: x.isoformat())
         data['end_time'] = data['time_until'].apply(lambda x: x.isoformat())
         data['codeid_id'] = data['CodeID'].apply(get_codeid_id_from_db)
@@ -378,79 +407,79 @@ class DataManager:
         ddat = data.drop(columns=['time_from','time_until','CodeID'])
         return ddat[lnom]
         
-    def store_data(self, table_name: str, data: pd.DataFrame, verbose: int = 1) -> None:
+    def store_data(self, table_name: str, data: pd.DataFrame, verbose: int = 1) -> List[int]:
         """
         Stores rows into a specified PostgreSQL table after Pydantic validation.
+
+        Every table has a validation model, so only the model's fields can become
+        column names, and table and column names are sent as quoted SQL
+        identifiers. The input DataFrame is not modified. Either all rows are
+        inserted or none: any error rolls the transaction back and is raised to
+        the caller.
 
         :param table_name: destination table name.
         :param data: DataFrame of rows to insert.
         :param verbose: verbosity level.
-        :return: list of inserted row IDs.
+        :return: list of inserted row IDs (empty if there is nothing to insert).
         :rtype: List[int]
+        :raises ValueError: if the table is not one of the known tables.
+        :raises pydantic.ValidationError: if a row does not match the table model.
+        :raises psycopg2.Error: if the insertion fails.
         """
-        if data.empty and verbose > 0:
-            print(i18n._("PGSQL-INS-TAB-NOD-ERR").format(table_name=table_name))
-            return
+        model = TABLE_MODELS.get(table_name)
+        if model is None:
+            raise ValueError(i18n._("ERR_UNKNOWN_TABLE").format(table=table_name))
+        if data.empty:
+            if verbose > 0:
+                print(i18n._("PGSQL-INS-TAB-NOD-ERR").format(table_name=table_name))
+            return []
 
         try:
             if verbose > 0:
                 print(i18n._("PGSQL-INS-TAB-INFO"))
 
-            # Convert time columns to strings
-            if "start_time" in data.columns:
-                data["start_time"] = data["start_time"].astype(str)
-            if "end_time" in data.columns:
-                data["end_time"] = data["end_time"].astype(str)
+            # Convert time columns to strings, on a copy
+            data = data.copy()
+            for column in ("start_time", "end_time"):
+                if column in data.columns:
+                    data[column] = data[column].astype(str)
 
             # Validate rows
             validated_rows = []
             for _, row in data.iterrows():
-                if table_name == "activity_leg":
-                    validated_rows.append(ActivityLeg(**row.to_dict()).dict())
-                elif table_name == "effective_movement":
-                    validated_rows.append(EffectiveMovement(**row.to_dict()).dict())
-                elif table_name == "activity_all":
-                    row_dict = row.to_dict()
-                    
-                    # Normalize None in codeleg_ids
-                    if "codeleg_ids" in row_dict:
-                        row_dict["codeleg_ids"] = [
-                            -1 if v is None else int(v) for v in row_dict["codeleg_ids"]
-                        ]
-                    
-                    validated_rows.append(ActivityAll(**row_dict).dict())
-
-                elif table_name == "fullref_sensor_codeid":
-                    validated_rows.append(ActivitySegment(**row.to_dict()).dict())
-                elif table_name == "effective_gait":
-                    validated_rows.append(row.to_dict())
-                elif table_name == "codeids":
-                    validated_rows.append(CodeID(**row.to_dict()).dict())
-                else:
-                    raise ValueError(i18n._("ERR_UNKNOWN_TABLE").format(table=table_name))
+                row_dict = row.to_dict()
+                # Normalize None in codeleg_ids
+                if table_name == "activity_all" and "codeleg_ids" in row_dict:
+                    row_dict["codeleg_ids"] = [
+                        -1 if v is None else int(v) for v in row_dict["codeleg_ids"]
+                    ]
+                validated_rows.append(model(**row_dict).model_dump())
 
             # Insert into database
             inserted_ids = [] # List of inserted activity_leg IDs
             with self.pg_conn.cursor() as cursor:
                 for row in validated_rows:
-                    columns = ', '.join(row.keys())
-                    placeholders = ', '.join(['%s'] * len(row))
-                    sql = f"INSERT INTO {table_name} ({columns}) VALUES " + \
-                          f"({placeholders}) RETURNING id"
-                    cursor.execute(sql, tuple(row.values()))
+                    statement = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING id").format(
+                        sql.Identifier(table_name),
+                        sql.SQL(', ').join(map(sql.Identifier, row.keys())),
+                        sql.SQL(', ').join(sql.Placeholder() * len(row)),
+                    )
+                    cursor.execute(statement, tuple(row.values()))
                     inserted_id = cursor.fetchone()[0]  # Obtaining the inserted ID
                     inserted_ids.append(inserted_id)
-                self.pg_conn.commit()
-                if verbose > 0:
-                    print(i18n._("PGSQL-INS-TAB-OK").format(table_name=table_name))
-                if verbose > 1:
-                    print(i18n._("PGSQL-LST-INS").format(ids=inserted_ids))
-                return inserted_ids
+            self.pg_conn.commit()
+            if verbose > 0:
+                print(i18n._("PGSQL-INS-TAB-OK").format(table_name=table_name))
+            if verbose > 1:
+                print(i18n._("PGSQL-LST-INS").format(ids=inserted_ids))
+            return inserted_ids
         except ValidationError as e:
-            print(i18n._("PGSQL-VAL-TAB-ERR").format(e=e))
+            logger.error(i18n._("PGSQL-VAL-TAB-ERR").format(e=e))
+            raise
         except Exception as e:
-            self.pg_conn.rollback()
-            print(i18n._("PGSQL-INS-TAB-ERR").format(e=e))
+            self._rollback()
+            logger.error(i18n._("PGSQL-INS-TAB-ERR").format(e=e, table_name=table_name))
+            raise
 
 
     def get_real_codeid(self, codeid_id: int) -> str:

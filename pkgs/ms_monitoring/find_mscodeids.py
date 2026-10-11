@@ -187,12 +187,17 @@ def main():
                     print(_("WARN_NO_SEGMENTS_LEG").format(codeid=codeid, foot='Left'))
             else:
                 activity_refL = data_manager.transform_activityleg(activity_segL)
+                # transform_activityleg ya no modifica su entrada: se añade aquí lo que usan los pasos siguientes.
+                activity_segL = activity_segL.rename(columns={'DeviceName': 'device_name', 'Foot': 'foot'}) \
+                    .assign(codeid_id=activity_refL['codeid_id'].to_numpy())
 
             if activity_segR.empty:
                 if args.verbose >= 1:
                     print(_("WARN_NO_SEGMENTS_LEG").format(codeid=codeid, foot='Right'))
             else:
                 activity_refR = data_manager.transform_activityleg(activity_segR)
+                activity_segR = activity_segR.rename(columns={'DeviceName': 'device_name', 'Foot': 'foot'}) \
+                    .assign(codeid_id=activity_refR['codeid_id'].to_numpy())
 
             # Store activity_leg segments
             if not activity_segL.empty:

@@ -1,21 +1,16 @@
+# Dependencias de pipeline_test.py. Deben coincidir con [project].dependencies de pyproject.toml
+# (lo comprueba tests/test_install_lr.py). Instalación recomendada:  python -m pip install -e ".[dev]"
 pandas
 numpy
-pyyaml
-influxdb-client
-urllib3
-openpyxl
-pydantic
-tables
-python-dotenv>=1.0
 scipy
-matplotlib
+influxdb-client
+tables
+openpyxl
+pyyaml
+python-dotenv>=1.0
 
-sys
-os
-logging
-GaitMetricsCalculator
-msTools
-urlib.parse
-GaitMetricsCalculator
-influx-wallclock-z
-msTools
+# Extras opcionales (ver pyproject.toml):
+#   python -m pip install -e ".[graficos]"   gráficas (matplotlib, seaborn)
+#   python -m pip install -e ".[pg]"         paquete heredado con PostgreSQL
+#   python -m pip install -e ".[api]"        API heredada
+#   python -m pip install -e ".[dev]"        tests y DUDAS.pdf

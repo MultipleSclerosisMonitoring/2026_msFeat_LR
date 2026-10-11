@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from msTools.data_manager import DataManager
 from msTools import i18n
 from msTools.timeutils import influx_wallclock_z
+from msTools.flux import flux_range, flux_string
 from msGait.models import EffectiveMovement
 
 from scipy.signal import welch
@@ -59,10 +60,12 @@ class MovementDetector:
             """
             try:
                 ids_from_time = self.data_manager.get_activity_ids_by_start_date_range(fstart, fend)
+                # La selección de datos no depende del nivel de información.
+                if ids_from_time:
+                    self.ids = ids_from_time
                 if verbose >= 1:
                     if ids_from_time:
                         print(f"[MovementDetector] {len(ids_from_time)} ID(s) found in activity_all for the time window.")
-                        self.ids = ids_from_time
                     else:
                         print("[MovementDetector] No IDs found in activity_all for the requested time window.")
             except Exception as e:
@@ -120,9 +123,9 @@ class MovementDetector:
         end_time = influx_wallclock_z(end_time)
 
         query = f'''
-        from(bucket: "{self.data_manager.bucket}")
-            |> range(start: {start_time}, stop: {end_time})
-            |> filter(fn: (r) => r["CodeID"] == "{codeid}" and r["Foot"] == "{foot}")
+        from(bucket: {flux_string(self.data_manager.bucket)})
+            |> range({flux_range(start_time, end_time)})
+            |> filter(fn: (r) => r["CodeID"] == {flux_string(codeid)} and r["Foot"] == {flux_string(foot)})
             |> filter(fn: (r) => r["_field"] == "Ax" or r["_field"] == "Ay" or r["_field"] == "Az" 
                               or r["_field"] == "Gx" or r["_field"] == "Gy" or r["_field"] == "Gz")
             |> pivot(rowKey:["_time"], columnKey:["_field"], valueColumn:"_value")
@@ -183,8 +186,12 @@ class MovementDetector:
             threshold (float): Activity threshold.
 
         Returns:
-            bool: True if signal is continuously active long enough.
+            bool: True if signal is continuously active long enough. An empty
+            signal is never effective.
         """
+        signal = np.asarray(signal)
+        if signal.size == 0:
+            return False
         std_signal = np.std(signal)
         if std_signal < 0.01:
             return False
@@ -422,11 +429,15 @@ class MovementDetector:
             return pd.DataFrame(columns=['codeid_id', 'start_time', 'end_time', 'duration'])
 
         # Coerce the datetime format.
+        # Cualquier ISO 8601 es válido, con o sin fracción y con o sin offset.
         df = df_effective.copy()
-        df['start_time'] = df['start_time'].apply(lambda x: x if '.' in x else x + '.000000')
-        df['start_time'] = pd.to_datetime(df['start_time'], format="%Y-%m-%dT%H:%M:%S.%f")
-        df['end_time'] = df['end_time'].apply(lambda x: x if '.' in x else x + '.000000')
-        df['end_time'] = pd.to_datetime(df['end_time'], format="%Y-%m-%dT%H:%M:%S.%f")
+        for column in ('start_time', 'end_time'):
+            try:
+                df[column] = pd.to_datetime(df[column], format="ISO8601")
+            except (ValueError, TypeError) as e:
+                raise ValueError(
+                    f"{column} debe ser ISO 8601 y todas las filas deben llevar offset o ninguna: {e}"
+                ) from None
 
         gait_rows = []
 
@@ -463,11 +474,12 @@ class MovementDetector:
 
         Returns:
             None
+
+        Raises:
+            Exception: Any validation or database error raised by the DataManager.
         """
-        if df.empty and verbose > 0:
-            print(i18n._("PGSQL-INS-TAB-NOD-ERR").format(table_name=table_name))
+        if df.empty:
+            if verbose > 0:
+                print(i18n._("PGSQL-INS-TAB-NOD-ERR").format(table_name=table_name))
             return
-        try:
-            self.data_manager.store_data(table_name, df, verbose)
-        except Exception as e:
-            print(i18n._("PGSQL-INS-TAB-ERR").format(fable_name=table_name, e=e))
+        self.data_manager.store_data(table_name, df, verbose)

@@ -4,7 +4,8 @@ influxdb:
   measurement: Gait
   url: ${INFLUXDB_URL}
   token: ${INFLUXDB_TOKEN}
-  verify: false
+  verify_ssl: true              # verificar el certificado TLS del servidor (recomendado)
+  # ssl_ca_cert: ../certs/ca.pem  # opcional: CA propia si el certificado no es de una CA pública
   timeout: 900000
 postgresql:
   host: ${POSTGRES_HOST}
@@ -12,6 +13,7 @@ postgresql:
   password: ${POSTGRES_PASSWORD}
   database: ${POSTGRES_DB}
   port: 5432
+  # connect_timeout: 10         # opcional, en segundos; sin esta clave no se aplica timeout
 movement:
   accel_threshold: 0.2
   gyro_threshold: 75
@@ -25,9 +27,52 @@ paths:
   output_folder: ../data/raw
   h5_path: ../data/raw/gait_study_data.h5
   output_dataset: ../DatasetMaestro.xlsx
-  output_report: ../INFORME_CLINICO_FINAL.xlsx
 processing:
-  fs: 100
+  # Todos los parámetros son opcionales; se muestran los valores por defecto.
+  # Ventanas y distancias en segundos: se convierten a muestras con la
+  # frecuencia efectiva medida en cada serie. Los valores usados se exportan
+  # en la hoja Parametros del Excel.
+  fs: 100                       # frecuencia nominal (Hz); solo para avisar si la medida se aparta
+  fs_tolerance: 0.10            # desviación relativa admitida frente a la nominal
+  max_gap_s: 0.5                # hueco = intervalo entre muestras mayor que este valor (provisional)
+  max_interpolation_s: 0.1      # tramo máximo sin valor que se interpola (provisional)
+  min_coverage: 0.8             # fracción mínima de muestras válidas por canal (provisional)
+  filter_order: 4
+  accel_cutoff_hz: 3.0
+  gyro_cutoff_hz: 5.0
+  pressure_cutoff_hz: 5.0
+  pressure_window_s: 0.15
+  turn_axis: Gz                 # sin calibrar con giros etiquetados
+  turn_threshold: 50.0
+  turn_min_duration_s: 1.0      # episodios más cortos no son giros (provisional; 0 = no filtrar)
+  min_steady_s: 3.0
+  step_min_distance_s: 0.4
+  step_min_threshold: 0.15
+  step_std_factor: 0.3
+  # step_prominence: 0.1        # sin definir: no se exige prominencia
+  step_modality: auto           # auto | accel | pressure
+  rescue_min_steps: 5           # en auto: con menos picos de aceleración se usa la presión si detecta más
+  pressure_step_distance_s: 0.5
+  pressure_step_height: 200.0
+  cadence_min: 30.0
+  cadence_max: 200.0
+  pressure_stance_is_low: true  # polaridad de la presión: pendiente de confirmar con el hardware
+  cycle_min_s: 0.5              # (provisional)
+  cycle_max_s: 3.0              # (provisional)
+  decay_block_s: 60.0
+  decay_min_duration_s: 120.0   # (provisional)
+  stride_window_s: 2.0
+  stride_k: 50.0                # no calibrada
+  stride_exponent: 0.25
+  stride_clip_min_cm: 20.0
+  stride_clip_max_cm: 160.0
+  stride_ok_min_cm: 30.0
+  stride_ok_max_cm: 150.0
+  swing_min_s: 0.2
+  swing_max_s: 1.5
+  height_ok_min_cm: 2.0
+  height_ok_max_cm: 25.0
+  gravity: 9.81
 batch:
   test_type: 6MWT
 project:

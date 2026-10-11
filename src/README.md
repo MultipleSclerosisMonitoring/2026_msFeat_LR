@@ -6,7 +6,7 @@ This directory contains the internal source code of the project. It is structure
 * **`gait_analysis/`**: The primary package containing the classes and methods for database extraction, data validation with Pydantic, and HDF5 storage management.
 
 ## Modular Architecture
-The code is designed to be imported as a library by the scripts located in the root `scripts/` folder. 
+The package is a library. It is used by the root command `pipeline_test.py` (the only pipeline entry point), by `benchmarks/benchmark_pipeline.py` and by the one-off tools in `scripts/`. It is run from the repository folder (editable install); see the root README. 
 
 **Key Design Principles:**
 - **OOP Compliance**: Logic is encapsulated within classes to avoid global state issues.
