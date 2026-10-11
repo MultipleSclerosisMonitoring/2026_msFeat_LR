@@ -67,8 +67,29 @@ def test_bursty_timestamps_do_not_create_gaps_or_a_false_rate():
     frame['_time'] = frame['_time'] + offsets
     prepared = CALC.preparar(frame)
     assert prepared.report['fs_efectiva'] == pytest.approx(100, abs=0.5) and prepared.report['n_huecos'] == 0
-    assert prepared.report['irregularidad_tiempo'] > 0.9 and not prepared.report['fs_desviada']
+    assert prepared.report['irregularidad_tiempo'] > 0.9 and prepared.report['fs_desviada']   # nominal: 50 Hz
     assert CALC.calcular_cadencia(prepared)['cadencia'] == pytest.approx(60, abs=1)
+    # Rejilla uniforme: mismas filas y valores, instantes a paso constante (marcas de recepción corregidas).
+    assert prepared.report['rejilla_tiempo'] == 'uniform' and len(prepared.t) == len(frame)
+    assert np.allclose(np.diff(prepared.t), 0.01, atol=1e-4) and prepared.data['Ay'].equals(frame['Ay'].reset_index(drop=True))
+    assert prepared.report['duracion_real_seg'] == pytest.approx(20, abs=0.02)
+    received = GaitMetricsCalculator(ProcessingConfig(time_grid='received')).preparar(frame)
+    assert received.report['rejilla_tiempo'] == 'received' and np.diff(received.t).min() < 0.005
+    # La altura se integra sobre la rejilla: con marcas en ráfagas da lo mismo que con marcas regulares.
+    regular = CALC.calcular_altura_zancada(walk(fs=100.0))['step_height_cm']
+    assert CALC.calcular_altura_zancada(prepared)['step_height_cm'] == pytest.approx(regular, rel=0.02)
+    assert not CALC.preparar(walk(fs=50.0)).report['fs_desviada']
+
+
+def test_uniform_grid_keeps_gaps_and_never_overlaps_segments():
+    frame = walk(seconds=30, fs=50.0)
+    seconds = (frame['_time'] - frame['_time'].iloc[0]).dt.total_seconds()
+    gapped = frame[(seconds < 10) | (seconds >= 20)]
+    prepared = CALC.preparar(gapped)
+    assert prepared.report['n_huecos'] == 1 and prepared.report['tiempo_huecos_seg'] == pytest.approx(10, abs=0.05)
+    assert np.all(np.diff(prepared.t) > 0) and prepared.t[-1] == pytest.approx(29.98, abs=0.03)
+    with pytest.raises(ConfigError):
+        ProcessingConfig.from_mapping({'time_grid': 'otra'})
 
 
 # --- LR-13 / LR-14 / LR-29: configuración tipada y transmitida --------------------------

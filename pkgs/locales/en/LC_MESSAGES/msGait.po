@@ -403,8 +403,8 @@ msgid "INFO_STORED_ONLY: {0} eventos se recalculan desde el almacén; {1} no est
 msgstr "INFO_STORED_ONLY: {0} events are recomputed from the store; {1} are not stored and are skipped without querying"
 
 #: pipeline_test.py
-msgid "WARN_FS_MISMATCH: {0} de {1} series tienen una frecuencia efectiva (~{2} Hz) alejada de la nominal processing.fs={3:g} Hz. Las métricas usan la frecuencia medida; revise la configuración."
-msgstr "WARN_FS_MISMATCH: {0} of {1} series have an effective rate (~{2} Hz) far from the nominal processing.fs={3:g} Hz. Metrics use the measured rate; check the configuration."
+msgid "INFO_FS_RATES: {0} de {1} series tienen una frecuencia efectiva (~{2} Hz) distinta de la nominal processing.fs={3:g} Hz. Es esperable, porque depende del sensor; las métricas usan la frecuencia medida de cada serie."
+msgstr "INFO_FS_RATES: {0} of {1} series have an effective rate (~{2} Hz) different from the nominal processing.fs={3:g} Hz. This is expected, as it depends on the sensor; metrics use the rate measured for each series."
 
 #: pipeline_test.py
 msgid "DEBUG_METRIC_STATUS: Evento {0} ({1}) {2}: {3} ({4})"
@@ -801,3 +801,7 @@ msgstr "INFO_BENCH_CASE: Case {0}, repetition {1}/{2}"
 #: benchmarks/benchmark_pipeline.py
 msgid "INFO_BENCH_CASE: Evento {0}, repetición {1}/{2}"
 msgstr "INFO_BENCH_CASE: Event {0}, repetition {1}/{2}"
+
+#: GaitMetricsCalculator.py
+msgid "processing.time_grid debe ser uno de {0}."
+msgstr "processing.time_grid must be one of {0}."

@@ -139,6 +139,7 @@ class GaitPipeline:
             "tiempo_huecos_seg": report.get("tiempo_huecos_seg", np.nan),
             "muestras_interpoladas": report.get("muestras_interpoladas", np.nan),
             "irregularidad_tiempo": report.get("irregularidad_tiempo", np.nan),
+            "rejilla_tiempo": report.get("rejilla_tiempo", ""),
             "cobertura_min": min(report["cobertura"].values()) if report.get("cobertura") else np.nan,
             "pasos": cad_res["num_pasos"],
             "cadencia": cad_res["cadencia"],
@@ -546,8 +547,8 @@ class GaitPipeline:
         deviated = [row for row in foot_rows if row.get("fs_desviada") is True]
         if deviated:
             rates = sorted({round(row["fs_efectiva"]) for row in deviated})
-            logger.warning(
-                _("WARN_FS_MISMATCH: {0} de {1} series tienen una frecuencia efectiva (~{2} Hz) alejada de la nominal processing.fs={3:g} Hz. Las métricas usan la frecuencia medida; revise la configuración.").format(len(deviated), len(foot_rows), rates, self.processing.fs)
+            logger.info(
+                _("INFO_FS_RATES: {0} de {1} series tienen una frecuencia efectiva (~{2} Hz) distinta de la nominal processing.fs={3:g} Hz. Es esperable, porque depende del sensor; las métricas usan la frecuencia medida de cada serie.").format(len(deviated), len(foot_rows), rates, self.processing.fs)
             )
         if not (sheets["Estadisticas_Globales"].loc["n_validos"] > 0).any():
             logger.warning(_("WARN_NO_NUMERIC_STATS: No hay suficientes datos numéricos para Estadísticas Globales."))

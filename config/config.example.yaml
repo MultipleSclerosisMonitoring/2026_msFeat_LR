@@ -32,7 +32,8 @@ processing:
   # Ventanas y distancias en segundos: se convierten a muestras con la
   # frecuencia efectiva medida en cada serie. Los valores usados se exportan
   # en la hoja Parametros del Excel.
-  fs: 100                       # frecuencia nominal (Hz); solo para avisar si la medida se aparta
+  fs: 50                        # frecuencia nominal (Hz); depende del sensor, solo señala las series distintas
+  time_grid: uniform            # uniform: muestras recolocadas a paso constante | received: marcas tal como llegaron
   fs_tolerance: 0.10            # desviación relativa admitida frente a la nominal
   max_gap_s: 0.5                # hueco = intervalo entre muestras mayor que este valor (provisional)
   max_interpolation_s: 0.1      # tramo máximo sin valor que se interpola (provisional)

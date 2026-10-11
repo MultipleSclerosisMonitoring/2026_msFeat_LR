@@ -23,6 +23,7 @@ REPORT_METRICS = ("pasos", "cadencia", "apoyo_prc", "balanceo_prc", "decaimiento
 SYMMETRY_METRIC = "symmetry_index"
 PRESSURE_CHANNELS = ("S0", "S1", "S2")
 STEP_MODALITIES = ("auto", "accel", "pressure")
+TIME_GRIDS = ("uniform", "received")
 
 
 @dataclass(frozen=True)
@@ -33,8 +34,14 @@ class ProcessingConfig:
     muestras con la frecuencia efectiva medida en cada serie.
 
     Attributes:
-        fs (float): Frecuencia de muestreo nominal en Hz. Solo se usa para
-            avisar si la frecuencia efectiva medida se aparta de ella.
+        fs (float): Frecuencia de muestreo nominal en Hz (unos 50 Hz, aunque
+            depende del sensor). Solo se usa para señalar las series cuya
+            frecuencia efectiva medida es distinta.
+        time_grid (str): ``uniform`` recoloca las muestras de cada segmento
+            continuo en una rejilla de paso constante, sin tocar sus valores:
+            las marcas de ``_time`` son de recepción en el móvil y llegan en
+            ráfagas, mientras que el sensor muestrea a ritmo constante.
+            ``received`` usa las marcas tal como llegaron.
         fs_tolerance (float): Desviación relativa admitida entre la frecuencia
             efectiva y la nominal antes de marcar la serie.
         max_gap_s (float): Un intervalo entre muestras mayor que este valor se
@@ -82,7 +89,8 @@ class ProcessingConfig:
         height_ok_max_cm (float): Límite superior de altura plausible.
         gravity (float): Aceleración de la gravedad para pasar de g a m/s².
     """
-    fs: float = 100.0
+    fs: float = 50.0
+    time_grid: str = "uniform"
     fs_tolerance: float = 0.10
     max_gap_s: float = 0.5
     max_interpolation_s: float = 0.1
@@ -132,7 +140,7 @@ class ProcessingConfig:
         """
         for item in fields(self):
             value = getattr(self, item.name)
-            if item.name in ("turn_axis", "step_modality", "pressure_stance_is_low"):
+            if item.name in ("turn_axis", "step_modality", "pressure_stance_is_low", "time_grid"):
                 continue
             if item.name == "step_prominence" and value is None:
                 continue
@@ -147,6 +155,8 @@ class ProcessingConfig:
             raise ConfigError(_("processing.pressure_stance_is_low debe ser true o false."))
         if self.turn_axis not in SIGNAL_CHANNELS:
             raise ConfigError(_("processing.turn_axis debe ser uno de {0}.").format(', '.join(SIGNAL_CHANNELS)))
+        if self.time_grid not in TIME_GRIDS:
+            raise ConfigError(_("processing.time_grid debe ser uno de {0}.").format(', '.join(TIME_GRIDS)))
         if self.step_modality not in STEP_MODALITIES:
             raise ConfigError(_("processing.step_modality debe ser uno de {0}.").format(', '.join(STEP_MODALITIES)))
         if self.max_gap_s <= 1 / self.fs:
@@ -350,6 +360,10 @@ class GaitMetricsCalculator:
         los canales a numérico. La frecuencia efectiva es el número de muestras
         por segundo de señal continua (tasa media): es robusta frente a marcas
         de tiempo que llegan en ráfagas, que se informan como irregularidad.
+        Con ``time_grid: uniform`` las muestras de cada segmento se recolocan
+        después en una rejilla de paso constante (el intervalo medio medido),
+        anclada en la primera marca del segmento: no se interpola ni se añade o
+        quita ninguna fila, solo se corrige el instante de cada muestra.
         Los valores ausentes solo se interpolan en tramos de hasta
         ``max_interpolation_s``; el resto queda como ausente y corta el
         segmento. Nada se sustituye por cero.
@@ -391,9 +405,20 @@ class GaitMetricsCalculator:
             return PreparedSignal(error="ERR_TOO_FEW_SAMPLES")
         dt = float(inner.mean())
         fs = 1.0 / dt
-        duration = float(t[-1] - t[0] + dt)
         # Fracción de intervalos que se apartan más de un 50 % del medio (ráfagas).
         irregularity = float(np.mean(np.abs(inner - dt) > 0.5 * dt))
+        if cfg.time_grid == "uniform":
+            # Las marcas son de recepción: dentro de cada segmento el instante real de la
+            # muestra i es inicio + i·dt. Los valores y el número de filas no cambian.
+            starts = np.flatnonzero(np.concatenate(([True], gaps)))
+            counts = np.diff(np.append(starts, len(t)))
+            anchors = t[starts].copy()
+            for k in range(1, len(anchors)):  # un segmento nunca empieza antes de acabar el anterior
+                anchors[k] = max(anchors[k], anchors[k - 1] + counts[k - 1] * dt)
+            t = anchors[segment] + (np.arange(len(t)) - starts[segment]) * dt
+        duration = float(t[-1] - t[0] + dt)
+        if cfg.time_grid == "uniform":
+            gap_time = max(0.0, duration - len(t) * dt)
 
         limit = self.seconds_to_samples(cfg.max_interpolation_s, fs)
         data = pd.DataFrame(index=np.arange(len(t)))
@@ -423,6 +448,7 @@ class GaitMetricsCalculator:
             "muestras_interpoladas": interpolated, "tiempos_invalidos": invalid_times,
             "tiempos_repetidos": int(repeated.sum()), "reordenada": bool(reordered),
             "irregularidad_tiempo": round(irregularity, 3), "intervalo_mediano_s": round(float(np.median(inner)), 5),
+            "rejilla_tiempo": cfg.time_grid,
             "fs_desviada": bool(abs(fs - cfg.fs) / cfg.fs > cfg.fs_tolerance),
         }
         logger.debug(
