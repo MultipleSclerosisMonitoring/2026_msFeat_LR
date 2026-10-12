@@ -1,5 +1,6 @@
 """Contratos de configuración, instalación, TLS y traducción (LR-55 a LR-62). Sin red."""
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -26,27 +27,33 @@ def write_config(tmp_path, extra=None, influx=None):
 
 # --- LR-55 / LR-56 / LR-61: dependencias, paquete y versión -----------------------------
 
-def test_requirements_are_valid_and_match_pyproject():
+def test_dependencies_are_ranged_and_locked():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
-    lines = [line.strip() for line in (ROOT / 'requirements.txt').read_text(encoding='utf-8').splitlines()]
-    requirements = [line for line in lines if line and not line.startswith('#')]
-    assert requirements == project['project']['dependencies'] and len(set(requirements)) == len(requirements)
-    for requirement in requirements:                       # nombre de distribución válido, sin módulos estándar
-        assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*(\[[a-z,]+\])?([<>=!~]=?[0-9][0-9.]*)?', requirement), requirement
-        assert requirement.split('>')[0].split('=')[0] not in sys.stdlib_module_names
+    requirements = project['project']['dependencies']
+    names = [re.split(r'[<>=!~\[]', requirement)[0] for requirement in requirements]
+    assert len(set(names)) == len(names)
+    for requirement, name in zip(requirements, names):     # distribución válida, con mínimo y máximo, sin módulos estándar
+        assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*>=[0-9][0-9.]*,<[0-9][0-9.]*', requirement), requirement
+        assert name not in sys.stdlib_module_names
     extras = project['project']['optional-dependencies']
-    assert {'graficos', 'pg', 'api', 'dev'} <= set(extras) and 'seaborn' in extras['graficos']
+    assert {'graficos', 'pg', 'api', 'dev'} <= set(extras) and any(item.startswith('seaborn') for item in extras['graficos'])
     assert any(item.startswith('psycopg2') for item in extras['pg'])
+    # Poetry: backend de construcción, versiones de Python admitidas, licencia y versiones probadas (poetry.lock).
+    assert project['build-system']['build-backend'] == 'poetry.core.masonry.api'
+    assert project['project']['requires-python'] == '>=3.11,<3.14' and project['project']['license'] == 'AGPL-3.0-or-later'
+    assert not (ROOT / 'requirements.txt').exists()
+    locked = {package['name'].lower().replace('_', '-') for package in tomllib.loads((ROOT / 'poetry.lock').read_text(encoding='utf-8'))['package']}
+    assert {name.lower() for name in names} <= locked
+    workflow = yaml.safe_load((ROOT / '.github/workflows/tests.yml').read_text(encoding='utf-8'))
+    assert workflow['jobs']['tests']['strategy']['matrix']['python-version'] == ['3.11', '3.12', '3.13']
 
 
 def test_every_imported_distribution_is_declared():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))['project']
     declared = ' '.join(project['dependencies'] + sum(project['optional-dependencies'].values(), [])).lower()
     module_to_distribution = {'yaml': 'pyyaml', 'dotenv': 'python-dotenv', 'influxdb_client': 'influxdb-client'}
-    local = {'GaitMetricsCalculator', 'gait_analysis', 'msConfig', 'msTools', 'msGait', 'msCodeID', 'pipeline_test',
-             'graficas_tfg', 'edit_helpers'}
-    files = [ROOT / 'pipeline_test.py', ROOT / 'GaitMetricsCalculator.py', ROOT / 'graficas_tfg.py',
-             *(ROOT / 'src').rglob('*.py'), *(ROOT / 'pkgs' / 'msConfig').rglob('*.py'), ROOT / 'pkgs/msTools/flux.py',
+    local = {'gait_analysis', 'msConfig', 'msTools', 'msGait', 'msCodeID'}
+    files = [*(ROOT / 'src').rglob('*.py'), *(ROOT / 'pkgs' / 'msConfig').rglob('*.py'), ROOT / 'pkgs/msTools/flux.py',
              ROOT / 'pkgs/msTools/timeutils.py', ROOT / 'pkgs/msTools/i18n.py']
     for file in files:
         for module in re.findall(r'^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)', file.read_text(encoding='utf-8'), re.M):
@@ -57,11 +64,33 @@ def test_every_imported_distribution_is_declared():
 
 def test_packaged_library_is_self_consistent_and_versioned():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
-    include = project['tool']['setuptools']['packages']['find']['include']
-    assert {'msTools*', 'msGait*', 'msCodeID*', 'msConfig*', 'gait_analysis*'} <= set(include)   # DataManager necesita msGait.models
+    packages = {(item['include'], item['from']) for item in project['tool']['poetry']['packages']}
+    assert {('gait_analysis', 'src'), ('msConfig', 'pkgs'), ('msTools', 'pkgs'), ('msGait', 'pkgs'), ('msCodeID', 'pkgs')} <= packages   # DataManager necesita msGait.models
     import gait_analysis
     assert gait_analysis.__version__ == project['project']['version']
-    assert 'version_pipeline' in (ROOT / 'pipeline_test.py').read_text(encoding='utf-8')
+    assert 'version_pipeline' in (ROOT / 'src/gait_analysis/pipeline.py').read_text(encoding='utf-8')
+    # Las órdenes instaladas apuntan a funciones que existen; los nombres históricos siguen funcionando.
+    import importlib
+    for target in project['project']['scripts'].values():
+        module, function = target.split(':')
+        assert callable(getattr(importlib.import_module(module), function))
+    for shim, module in (('pipeline_test.py', 'gait_analysis.pipeline'), ('graficas_tfg.py', 'gait_analysis.plots'),
+                         ('GaitMetricsCalculator.py', 'gait_analysis.metrics')):
+        text = (ROOT / shim).read_text(encoding='utf-8')
+        assert f'from {module} import' in text and 'sys.path' not in text
+    # Ningún módulo del paquete retoca la ruta de importación, y los catálogos viajan dentro de él.
+    for file in [*(ROOT / 'src').rglob('*.py'), *(ROOT / 'pkgs/msConfig').rglob('*.py'), ROOT / 'pkgs/msTools/i18n.py']:
+        assert 'sys.path' not in file.read_text(encoding='utf-8'), file
+    from msTools import i18n
+    assert Path(i18n.LOCALES_DIR).parent == Path(i18n.__file__).resolve().parent and 'en' in i18n.available_languages()
+
+
+def test_working_folder_can_be_set_outside_the_checkout(tmp_path):
+    code = "import msConfig; print(msConfig.PROJECT_ROOT); print(msConfig.DEFAULT_CONFIG)"
+    env = {**os.environ, 'MSFEAT_HOME': str(tmp_path), 'PYTHONPATH': os.pathsep.join([str(ROOT / 'pkgs'), str(ROOT / 'src')])}
+    done = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env=env, cwd=tmp_path)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == [str(tmp_path.resolve()), str(tmp_path.resolve() / 'config' / 'config.yaml')]
 
 
 # --- LR-58: validación por tarea y de parámetros de análisis -----------------------------
@@ -82,8 +111,8 @@ def test_offline_tasks_do_not_need_database_variables(tmp_path, monkeypatch):
     with pytest.raises(ConfigError, match='postgresql'):
         load_config(write_config(tmp_path), sections=('postgresql',))
 
-    from pipeline_test import GaitPipeline
-    with patch('pipeline_test.InfluxDBClient') as client:
+    from gait_analysis.pipeline import GaitPipeline
+    with patch('gait_analysis.pipeline.InfluxDBClient') as client:
         pipeline = GaitPipeline(str(path), offline=True)
     assert pipeline.client is None and client.call_count == 0
 
@@ -143,7 +172,7 @@ def test_no_module_silences_tls_warnings_or_rewrites_the_host():
     done = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip().splitlines()[-1] == '1'
-    for file in ('pipeline_test.py', 'src/gait_analysis/extractor.py', 'pkgs/msTools/data_manager.py', 'InfluxDBms/cInfluxDB.py'):
+    for file in ('src/gait_analysis/pipeline.py', 'src/gait_analysis/extractor.py', 'pkgs/msTools/data_manager.py', 'InfluxDBms/cInfluxDB.py'):
         text = (ROOT / file).read_text(encoding='utf-8')
         assert 'disable_warnings' not in text and '138.100' not in text and 'normalize_influx_url' not in text, file
 
@@ -172,13 +201,13 @@ def test_catalogues_are_complete_and_compiled():
     done = subprocess.run([sys.executable, 'scripts/traducciones.py', '--check'], cwd=ROOT, capture_output=True, text=True,
                           encoding='utf-8', errors='replace')
     assert done.returncode == 0, done.stdout + done.stderr
-    assert not list((ROOT / 'pkgs' / 'locales').rglob('*.po~'))
+    assert not list((ROOT / 'pkgs' / 'msTools' / 'locales').rglob('*.po~'))
 
 
 def test_english_translations_keep_every_placeholder():
     sys.path.insert(0, str(ROOT / 'scripts'))
     import traducciones
-    english = traducciones.read_po(ROOT / 'pkgs/locales/en/LC_MESSAGES/msGait.po')
+    english = traducciones.read_po(ROOT / 'pkgs/msTools/locales/en/LC_MESSAGES/msGait.po')
     for message in traducciones.source_messages():
         fields = lambda text: sorted(re.findall(r'\{[^{}]*\}', text))
         assert fields(message) == fields(english[message]), message
@@ -194,3 +223,26 @@ def test_readmes_only_reference_files_that_exist():
         for link in re.findall(r'\]\((?!http)([^)#]+)\)', text):
             assert ((ROOT / readme).parent / link).exists(), f'{readme} enlaza {link}'
         assert 'InfluxConfig' not in text and 'generar_informe_clinico' not in text and 'main.py' not in text
+
+
+# --- Contrato de la hora: el registro guarda instantes con zona; InfluxDB, hora de reloj ---
+
+@pytest.mark.parametrize('registry, wallclock', [
+    ('2025-12-12 19:24:00+01', '2025-12-12T19:24:00Z'),            # invierno
+    ('2026-07-01 19:24:00+02', '2026-07-01T19:24:00Z'),            # verano
+    ('2026-03-29 01:59:59+01', '2026-03-29T01:59:59Z'),            # justo antes del cambio de hora
+    ('2026-03-29 03:00:00+02', '2026-03-29T03:00:00Z'),            # justo después
+    ('2025-11-17 19:24:36.317605+01', '2025-11-17T19:24:36.317605Z'),
+    ('2025-11-17 19:24:36', '2025-11-17T19:24:36Z'),               # sin zona: se toma tal cual
+])
+def test_registry_time_is_used_as_wall_clock_without_converting_to_utc(registry, wallclock):
+    from msTools.timeutils import experiment_wallclock, influx_wallclock_z
+    assert influx_wallclock_z(registry) == wallclock
+    assert experiment_wallclock(registry).tzinfo is None
+
+
+def test_template_shows_the_default_processing_values():
+    from gait_analysis.metrics import ProcessingConfig
+    template = yaml.safe_load((ROOT / 'config/config.example.yaml').read_text(encoding='utf-8'))
+    assert template['processing'] == ProcessingConfig().to_record()
+    assert template['registry'] == {'exclude_codeids': []} and template['influxdb']['connect_timeout'] == 10000

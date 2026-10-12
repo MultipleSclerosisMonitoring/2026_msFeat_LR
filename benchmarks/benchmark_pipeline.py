@@ -26,7 +26,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "pkgs"), str(ROOT / "src"), str(ROOT)]
 
-from GaitMetricsCalculator import GaitMetricsCalculator
+from gait_analysis.metrics import GaitMetricsCalculator
 from gait_analysis.logging_utils import configure_logging
 from msTools.i18n import _
 from gait_analysis.query import build_trial_query, normalize_query_result, split_series
@@ -60,7 +60,7 @@ def synthetic_response(seconds: int, fs: float) -> list[pd.DataFrame]:
             "_time": start + pd.to_timedelta(t, unit="s"),
             "_measurement": "Gait", "CodeID": "BENCH-1", "DeviceName": f"Sock{side}", "Foot": side,
             "mac": f"AA:{side}", "lat": 40.4, "lng": -3.7,
-            "Ax": 0.0, "Ay": walking, "Az": 1.0, "Gx": 0.0, "Gy": 0.0, "Gz": 0.0,
+            "Ax": 0.0, "Ay": 1.0 + 0.3 * walking, "Az": 0.0, "Gx": 0.0, "Gy": 0.0, "Gz": 0.0,
             "S0": 500 + 400 * walking, "S1": 500 + 400 * walking, "S2": 500 + 400 * walking,
         }))
     return frames

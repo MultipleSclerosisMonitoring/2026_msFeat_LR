@@ -8,6 +8,11 @@ def experiment_wallclock(ts):
     The historical InfluxDB data stores Europe/Madrid wall-clock times as if
     they were UTC. For Influx queries we must therefore preserve the displayed
     clock time and drop any timezone offset instead of converting to UTC.
+
+    The trial registry stores real instants with their offset (``+01`` in
+    winter, ``+02`` in summer): ``2025-12-12 19:24:00+01`` is 18:24 UTC, and
+    this function returns the wall-clock ``19:24``. Everything verifiable is
+    coherent with this contract from November 2025 onwards.
     """
     ts = pd.to_datetime(ts)
     if ts.tzinfo is not None:

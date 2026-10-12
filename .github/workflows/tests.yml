@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Cabeceras de PostgreSQL (psycopg2 del código heredado)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libpq-dev
+      - name: Instalar Poetry
+        run: pipx install poetry
+      - name: Instalar el proyecto con las versiones de poetry.lock
+        run: |
+          poetry env use python
+          poetry install --all-extras
+      - name: Catálogos de traducción al día
+        run: poetry run python scripts/traducciones.py --check
+      - name: Tests
+        run: poetry run pytest -q
+      - name: Instalación limpia fuera del repositorio
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/limpio"
+          BIN="$RUNNER_TEMP/limpio/bin"; [ -d "$BIN" ] || BIN="$RUNNER_TEMP/limpio/Scripts"
+          "$BIN/python" -m pip install ".[graficos]"
+          cd "$RUNNER_TEMP"
+          "$BIN/msfeat-pipeline" --help
+          "$BIN/msfeat-graficas" --help
+          "$BIN/python" -c "from msTools import i18n; import gait_analysis.pipeline; assert 'en' in i18n.available_languages()"

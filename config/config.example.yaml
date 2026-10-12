@@ -5,6 +5,8 @@ influxdb:
   url: ${INFLUXDB_URL}
   token: ${INFLUXDB_TOKEN}
   verify_ssl: true              # verificar el certificado TLS del servidor (recomendado)
+  retry_waits_s: [5, 15, 45]    # esperas antes de reintentar; solo ante errores de red (no ante 401/400). [] = sin reintentos
+  connect_timeout: 10000        # ms para establecer la conexión; el de lectura es timeout
   # ssl_ca_cert: ../certs/ca.pem  # opcional: CA propia si el certificado no es de una CA pública
   timeout: 900000
 postgresql:
@@ -14,14 +16,8 @@ postgresql:
   database: ${POSTGRES_DB}
   port: 5432
   # connect_timeout: 10         # opcional, en segundos; sin esta clave no se aplica timeout
-movement:
-  accel_threshold: 0.2
-  gyro_threshold: 75
-  accel_power_threshold: 0.125
-  gyro_power_threshold: 1000
-  freq_band_min: 0.4
-  freq_band_max: 1.6
-  min_continuous_hits: 3
+registry:
+  exclude_codeids: []           # pacientes cuyos eventos no se procesan (quedan como EXCLUDED), p. ej. [AMIR-48]
 paths:
   registry_csv: ../tests.csv
   output_folder: ../data/raw
@@ -35,44 +31,63 @@ processing:
   fs: 50                        # frecuencia nominal (Hz); depende del sensor, solo señala las series distintas
   time_grid: uniform            # uniform: muestras recolocadas a paso constante | received: marcas tal como llegaron
   fs_tolerance: 0.10            # desviación relativa admitida frente a la nominal
-  max_gap_s: 0.5                # hueco = intervalo entre muestras mayor que este valor (provisional)
-  max_interpolation_s: 0.1      # tramo máximo sin valor que se interpola (provisional)
-  min_coverage: 0.8             # fracción mínima de muestras válidas por canal (provisional)
+  # --- Huecos y cobertura, por grupo de sensores (IMU y presión) ---
+  max_gap_s: 0.1                # hueco = más de 100 ms sin un valor nuevo (en la IMU, solo con el pie en movimiento)
+  max_interpolation_s: 0.1      # hasta ese mismo umbral se interpola; por encima se corta
+  reception_window_s: 0.2       # tras un intervalo largo entre filas se cuentan las muestras de los 200 ms siguientes...
+  reception_min_fraction: 0.9   # ...y si llega el 90 % de las esperadas es recepción retrasada, no un hueco
+  imu_moving_gyro: 100.0        # el pie se mueve si el módulo del giroscopio supera 100 grados/s (o la presión cambia de estado)
+  imu_max_stale_moving: 0.10    # más del 10 % de filas con la IMU repetida en movimiento: IMU no válida en la serie
+  min_coverage: 0.8             # fracción mínima del tiempo fuera de huecos, en la presión
+  # --- Zancadas válidas mínimas, por prueba (en TUG no se informan métricas de marcha) ---
+  # Una prueba que no figure aquí no informa métricas de marcha.
+  min_strides:
+    6MWT: 30                    # en el ensayo completo
+    2MWT: 10
+    T25FW: 4                    # juntando los intentos del paciente en el mismo día
+  min_strides_minute: 20        # en cada minuto que compara el decaimiento
+  t25fw_skip_first_strides: 1   # zancadas de arranque que se descartan en cada pie y cada intento del T25FW
+  # --- Filtros ---
   filter_order: 4
-  accel_cutoff_hz: 3.0
-  gyro_cutoff_hz: 5.0
-  pressure_cutoff_hz: 5.0
   pressure_window_s: 0.15
-  turn_axis: Gz                 # sin calibrar con giros etiquetados
-  turn_threshold: 50.0
-  turn_min_duration_s: 1.0      # episodios más cortos no son giros (provisional; 0 = no filtrar)
+  # --- Calidad del talón: ritmo de marcha si la ventana es larga; rango si es corta ---
+  heel_min_periodicity: 0.3     # autocorrelación mínima del talón en el periodo de zancada (ventana >= 2 x cycle_max_s; provisional)
+  pressure_min_range: 40.0      # rango mínimo del talón cuando la ventana no da para medir el ritmo
+  heel_valley_prominence: 0.4   # prominencia mínima del valle de apoyo, como fracción del rango del talón (provisional)
+  # --- Orientación: gravedad estimada en reposo ---
+  rest_gyro_quantile: 0.25      # fracción de muestras con menos giro candidatas a reposo
+  rest_accel_tolerance_g: 0.1   # en reposo, el módulo de la aceleración está a esta distancia de 1 g
+  # --- Giros por ángulo acumulado ---
+  turn_axis: vertical           # giro en torno a la vertical estimada (Gy si no se puede estimar); o un canal: Gy
+  turn_smooth_cutoff_hz: 0.5    # quita la oscilación de cada zancada (provisional)
+  turn_threshold: 25.0          # velocidad de giro suavizada (grados/s) que debe superarse en el episodio (provisional)
+  turn_extend_threshold: 10.0   # el episodio se extiende hasta bajar de esta velocidad, para no perder ángulo (provisional)
+  turn_min_angle_deg: 90.0      # ángulo acumulado mínimo para contar un giro
+  turn_min_duration_s: 0.0      # duración mínima adicional; 0 = no se exige
   min_steady_s: 3.0
-  step_min_distance_s: 0.4
-  step_min_threshold: 0.15
-  step_std_factor: 0.3
-  # step_prominence: 0.1        # sin definir: no se exige prominencia
-  step_modality: auto           # auto | accel | pressure
-  rescue_min_steps: 5           # en auto: con menos picos de aceleración se usa la presión si detecta más
-  pressure_step_distance_s: 0.5
-  pressure_step_height: 200.0
-  cadence_min: 30.0
-  cadence_max: 200.0
-  pressure_stance_is_low: true  # polaridad de la presión: pendiente de confirmar con el hardware
-  cycle_min_s: 0.5              # (provisional)
-  cycle_max_s: 3.0              # (provisional)
-  decay_block_s: 60.0
-  decay_min_duration_s: 120.0   # (provisional)
-  stride_window_s: 2.0
-  stride_k: 50.0                # no calibrada
-  stride_exponent: 0.25
-  stride_clip_min_cm: 20.0
-  stride_clip_max_cm: 160.0
-  stride_ok_min_cm: 30.0
+  # --- Zancadas: contacto de talón por presión ---
+  heel_channel: S2              # S2 = talón; S0 y S1 = antepié
+  pressure_stance_is_low: true  # el valor guardado baja en el apoyo (así se comportan los datos)
+  cycle_min_s: 0.8              # tiempo de zancada mínimo y separación mínima entre contactos de talón
+  cycle_max_s: 2.5              # tiempo de zancada máximo
+  swing_min_s: 0.25             # balanceo de un ciclo válido: duración...
+  swing_max_s: 0.8
+  swing_min_prc: 20.0           # ...y porcentaje del ciclo
+  swing_max_prc: 55.0
+  cadence_min: 24.0             # zancadas por minuto: 60 / cycle_max_s
+  cadence_max: 75.0             # 60 / cycle_min_s
+  # --- 6MWT completo y decaimiento ---
+  decay_block_s: 60.0           # el ensayo se analiza por minutos
+  sixmwt_duration_s: 360.0      # la ventana del registro debe durar 360 s...
+  sixmwt_tolerance_s: 5.0       # ...± 5 s
+  sixmwt_min_valid_minutes: 5   # minutos con datos válidos para aceptarlo como completo
+  # --- Longitud y altura (integración entre pies planos, sin constantes) ---
+  stride_ok_min_cm: 30.0        # banda de plausibilidad de la longitud
   stride_ok_max_cm: 150.0
-  swing_min_s: 0.2
-  swing_max_s: 1.5
-  height_ok_min_cm: 2.0
-  height_ok_max_cm: 25.0
+  # MTC (Müller 2021). Con el módulo en el tobillo no se calcula; la banda queda para cuando pueda medirse.
+  mtc_ok_min_cm: 0.4
+  mtc_ok_max_cm: 5.5
+  mtc_stride_max_cm: 6.0
   gravity: 9.81
 batch:
   test_type: 6MWT

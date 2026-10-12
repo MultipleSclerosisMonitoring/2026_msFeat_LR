@@ -21,6 +21,7 @@ STATUS_INVALID_ROW = "INVALID_ROW"
 STATUS_QUERY_ERROR = "QUERY_ERROR"
 STATUS_WRITE_ERROR = "WRITE_ERROR"
 STATUS_SKIPPED = "SKIPPED"
+STATUS_EXCLUDED = "EXCLUDED"
 
 # Los valores se interpolan en Flux y en claves HDF5: solo caracteres seguros.
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9_.\-]+")
@@ -70,6 +71,7 @@ class TrialResult:
         feet (dict): Por pie: clave HDF5, filas, dispositivo y duplicados eliminados.
         elapsed_s (float): Tiempo empleado en el evento.
         signal_mem_mb (float): Memoria ocupada por las señales del evento.
+        attempts (int): Consultas realizadas hasta obtener respuesta o agotar los reintentos.
     """
     trial_id: str
     codeid: str = ""
@@ -82,6 +84,7 @@ class TrialResult:
     feet: dict[str, dict[str, Any]] = field(default_factory=dict)
     elapsed_s: float = 0.0
     signal_mem_mb: float = 0.0
+    attempts: int = 1
 
     @classmethod
     def from_trial(cls, trial: Trial) -> "TrialResult":
@@ -106,6 +109,7 @@ class TrialResult:
             "status": self.status, "detail": self.detail, "d_from": self.d_from,
             "d_until": self.d_until, "source": self.source, "feet": self.feet,
             "elapsed_s": round(self.elapsed_s, 3), "signal_mem_mb": round(self.signal_mem_mb, 3),
+            "attempts": self.attempts,
         }
 
 
@@ -134,8 +138,13 @@ def load_registry(
     csv_path: str,
     test_type: str | None = None,
     ids: Iterable[str] | None = None,
+    exclude_codeids: Iterable[str] | None = None,
 ) -> tuple[list[Trial], list[TrialResult]]:
     """Lee y valida el registro completo antes de acceder a ninguna base de datos.
+
+    Los eventos de los pacientes de ``exclude_codeids`` (por ejemplo, pruebas
+    del desarrollador sin los calcetines puestos) no se procesan: se devuelven
+    con estado ``EXCLUDED`` y el registro no se modifica.
 
     Se validan todas las filas, también las que quedan fuera de la selección
     (estas solo se informan). Una fila inválida no aborta el lote: se devuelve
@@ -148,10 +157,11 @@ def load_registry(
             seleccionan todos los tipos.
         ids (Iterable[str] | None): Identificadores de evento a seleccionar.
             ``None`` selecciona todos.
+        exclude_codeids (Iterable[str] | None): Pacientes cuyos eventos se excluyen.
 
     Returns:
         tuple[list[Trial], list[TrialResult]]: Eventos válidos seleccionados y
-        resultados ``INVALID_ROW`` de las filas seleccionadas que no lo son.
+        resultados ``INVALID_ROW`` o ``EXCLUDED`` de las filas seleccionadas que no se procesan.
 
     Raises:
         FileNotFoundError: Si el CSV no existe.
@@ -176,6 +186,7 @@ def load_registry(
     trials: list[Trial] = []
     invalid: list[TrialResult] = []
     unselected_invalid = 0
+    excluded_codes = {str(code).strip() for code in (exclude_codeids or ())}
     for position, row in table.iterrows():
         # Se valida el registro completo; la selección solo decide qué se devuelve.
         problem = _row_problem(row, duplicated_ids)
@@ -184,6 +195,13 @@ def load_registry(
             if problem:
                 unselected_invalid += 1
                 logger.info(_("INFO_INVALID_ROW_UNSELECTED: Fila {0} del registro (id='{1}'), fuera de la selección, no es válida: {2}").format(position + 2, row['id'], problem))
+            continue
+        if row["codeid"] in excluded_codes:
+            invalid.append(TrialResult(
+                row["id"] or f"fila_{position + 2}", row["codeid"], row["t_code"], status=STATUS_EXCLUDED,
+                detail="paciente excluido en la configuración (registry.exclude_codeids)",
+                d_from=row["d_from"], d_until=row["d_until"],
+            ))
             continue
         if problem:
             logger.warning(_("WARN_INVALID_ROW: Fila {0} del registro (id='{1}') descartada: {2}").format(position + 2, row['id'], problem))

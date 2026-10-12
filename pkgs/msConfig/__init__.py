@@ -11,8 +11,24 @@ from urllib.parse import urlparse
 import yaml
 from dotenv import dotenv_values
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LOCALES_DIR = Path(__file__).resolve().parents[1] / 'locales'
+
+
+def _project_root() -> Path:
+    """Locate the working folder that holds config/, data/ and the outputs.
+
+    Returns:
+        Path: ``MSFEAT_HOME`` when set; otherwise the checkout this file lives
+        in (editable install); otherwise the current directory (installed wheel).
+    """
+    home = os.environ.get('MSFEAT_HOME')
+    if home:
+        return Path(home).expanduser().resolve()
+    checkout = Path(__file__).resolve().parents[2]
+    return checkout if (checkout / 'pyproject.toml').is_file() else Path.cwd()
+
+
+PROJECT_ROOT = _project_root()
+LOCALES_DIR = Path(__file__).resolve().parents[1] / 'msTools' / 'locales'
 CONNECTION_SECTIONS = ('influxdb', 'postgresql')
 logger = logging.getLogger('msGait.Config')
 DEFAULT_CONFIG = PROJECT_ROOT / 'config' / 'config.yaml'
@@ -104,12 +120,14 @@ def influx_client_options(config: dict) -> dict:
         config: Configuration returned by :func:`load_config` with ``influxdb`` loaded.
 
     Returns:
-        dict: ``url``, ``token``, ``org``, ``timeout``, ``verify_ssl`` and, if
-        configured, ``ssl_ca_cert``.
+        dict: ``url``, ``token``, ``org``, ``timeout`` (connection and read
+        timeouts in milliseconds), ``verify_ssl`` and, if configured, ``ssl_ca_cert``.
     """
     inf = config['influxdb']
+    # Pair (connection, read): a short connection timeout keeps a dead server from
+    # consuming the whole read timeout on every retry.
     options = {'url': inf['url'], 'token': inf['token'], 'org': inf['org'],
-               'timeout': inf['timeout'], 'verify_ssl': inf['verify_ssl']}
+               'timeout': (inf['connect_timeout'], inf['timeout']), 'verify_ssl': inf['verify_ssl']}
     if inf.get('ssl_ca_cert'):
         options['ssl_ca_cert'] = inf['ssl_ca_cert']
     if not inf['verify_ssl']:
@@ -162,7 +180,7 @@ def load_config(config_path: str | Path | None = None, *, dotenv_path: str | Pat
         if missing:
             raise ConfigError(f'Falta la sección {missing[0]}.')
     config = _expand(raw, env)
-    for label in ('influxdb', 'postgresql', 'paths', 'processing', 'batch', 'project', 'movement'):
+    for label in ('influxdb', 'postgresql', 'paths', 'processing', 'batch', 'project', 'movement', 'registry'):
         if label in config and not isinstance(config[label], dict):
             raise ConfigError(f'{label} debe ser un mapa.')
     if wanted is None or 'influxdb' in wanted:
@@ -190,7 +208,11 @@ def _validate_influxdb(config: dict, path: Path) -> None:
         raise ConfigError('influxdb.url debe ser una URL HTTP(S) sin credenciales incrustadas.')
     inf['verify_ssl'] = _boolean(inf.get('verify_ssl', inf.get('verify', True)), 'influxdb.verify_ssl')
     _positive_int(inf, 'timeout', 'influxdb', 30000)
+    _positive_int(inf, 'connect_timeout', 'influxdb', 10000)
     inf.setdefault('measurement', 'Gait')
+    waits = inf.setdefault('retry_waits_s', [5, 15, 45])
+    if not isinstance(waits, list) or any(isinstance(w, bool) or not isinstance(w, (int, float)) or w < 0 for w in waits):
+        raise ConfigError('influxdb.retry_waits_s debe ser una lista de esperas en segundos (vacía = sin reintentos).')
     if not isinstance(inf['measurement'], str) or not inf['measurement'].strip():
         raise ConfigError('influxdb.measurement debe ser una cadena no vacía.')
     if inf.get('ssl_ca_cert') is not None:
@@ -246,6 +268,9 @@ def _validate_analysis(config: dict, path: Path) -> None:
         except (TypeError, ValueError):
             raise ConfigError('processing.fs debe ser finito y mayor que 10 Hz para los filtros actuales.') from None
         processing['fs'] = fs
+    excluded = config.setdefault('registry', {}).setdefault('exclude_codeids', [])
+    if not isinstance(excluded, list) or any(not isinstance(code, str) or not code.strip() for code in excluded):
+        raise ConfigError('registry.exclude_codeids debe ser una lista de identificadores de paciente.')
     batch = config.setdefault('batch', {})
     batch.setdefault('test_type', '6MWT')
     if not isinstance(batch['test_type'], str) or not batch['test_type'].strip():

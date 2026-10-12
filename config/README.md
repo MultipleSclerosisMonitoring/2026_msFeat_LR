@@ -7,9 +7,8 @@ El cargador `msConfig.load_config` es compartido por el extractor, el pipeline d
 Para una instalación nueva desde la raíz:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
+pipx install poetry                 # una sola vez en el equipo
+poetry install --all-extras         # crea .venv/ con las versiones de poetry.lock
 cp config/config.example.yaml config/config.yaml
 cp .env.example .env
 ```
@@ -46,23 +45,23 @@ Se rechazan variables ausentes/vacías, YAML no estructurado, conexiones incompl
 
 ## Ejecución
 
-`pipeline_test.py` es el único comando: extrae de InfluxDB, guarda las señales, calcula las métricas y publica el Excel.
+`msfeat-pipeline` es el único comando: extrae de InfluxDB, guarda las señales, calcula las métricas y publica el Excel. Se ejecuta en el entorno de Poetry (`poetry run msfeat-pipeline ...`, o tras `poetry shell`); `python pipeline_test.py` es un lanzador de la misma orden.
 
 Comprobar configuración sin conectar:
 
 ```bash
-python pipeline_test.py --check-config
-python pipeline_test.py --check-config --config pkgs/.config.yaml
+msfeat-pipeline --check-config
+msfeat-pipeline --check-config --config pkgs/.config.yaml
 ```
 
 Procesar el registro configurado:
 
 ```bash
-python pipeline_test.py
-python pipeline_test.py --config config/config.yaml --csv tests.csv --test-type 6MWT
+msfeat-pipeline
+msfeat-pipeline --config config/config.yaml --csv tests.csv --test-type 6MWT
 ```
 
-`--check-config` solo verifica configuración, no autentica ni demuestra conectividad. Los scripts `consulta_influxdb.py` y `graficas_tfg.py` son auxiliares (exploración manual y figuras a partir del Excel) y no forman parte del pipeline.
+`--check-config` solo verifica configuración, no autentica ni demuestra conectividad. `consulta_influxdb.py` (exploración manual, código heredado) y `msfeat-graficas` (figuras a partir del Excel) son auxiliares y no forman parte del pipeline.
 
 Los comandos de `pkgs` siguen aceptando `-c config/config.yaml`. Para usarlos se requiere también su entorno de dependencias (`python -m pip install ./pkgs`); el proyecto raíz no instala todos los subsistemas heredados de PostgreSQL/API.
 
@@ -71,6 +70,8 @@ Los comandos de `pkgs` siguen aceptando `-c config/config.yaml`. Para usarlos se
 - `--ids 58,60`: procesa solo esos `id` del registro.
 - `--test-type 6MWT`: procesa solo ese tipo de test; sin la opción, todos.
 - `--missing-only`: usa el manifest para no volver a consultar los eventos completados; sus métricas se recalculan leyendo el almacén.
+- `--workers N`: N consultas simultáneas a InfluxDB (por defecto 1). La escritura y el análisis siguen en un único hilo y en el orden del registro.
+- Reintentos: si una consulta falla por conexión se reintenta tras las esperas de `influxdb.retry_waits_s` (5, 15 y 45 s); el número de intentos queda en el manifest y en `Estado_Eventos`.
 - `--stored-only`: recalcula solo los eventos ya guardados, sin ninguna consulta a InfluxDB. Es el modo para probar cambios de algoritmo o de parámetros.
 - `--audit`: compara el almacén con el registro sin consultar InfluxDB.
 - `--verbose 0|1|2`: 0 muestra avisos y errores; 1 (por defecto) añade el progreso por evento y el resumen final; 2 añade el detalle de depuración (coste por evento, verificaciones, eventos reutilizados, ensayos repetidos).
@@ -105,15 +106,24 @@ El Excel se escribe en un temporal, se relee y solo entonces sustituye al anteri
 
 Los parámetros están en la sección `processing` del YAML (plantilla comentada en `config/config.example.yaml`). Se validan al arrancar (tipos, signos, cortes por debajo de Nyquist, límites que no se contradigan) y los valores usados se exportan en la hoja `Parametros`.
 
-- **Tiempo real.** Cada serie exige `_time`. Las marcas de `_time` son de recepción en el móvil y llegan en ráfagas, mientras que el sensor muestrea a ritmo constante. Por eso la frecuencia efectiva se mide como muestras por segundo de señal continua (no depende de las ráfagas, que se informan como `irregularidad_tiempo`) y, con `time_grid: uniform`, las muestras de cada tramo continuo se recolocan a paso constante: no se interpola ni se añaden o quitan filas, solo se corrige el instante de cada muestra. `time_grid: received` usa las marcas tal como llegaron. `processing.fs` (50 Hz) es la nominal; como la real depende del sensor, las series distintas se señalan en `fs_desviada` y se resumen en nivel 1 (`INFO_FS_RATES`). Duraciones y cadencias salen de los tiempos, no del número de muestras.
-- **Huecos y valores ausentes.** Un intervalo entre muestras mayor que `max_gap_s` corta la serie en segmentos. Los valores ausentes o no numéricos solo se interpolan en tramos de hasta `max_interpolation_s`; nunca se sustituyen por cero. Un canal con cobertura inferior a `min_coverage` no se usa.
-- **Segmentos.** Filtros, detección de picos, ciclos y balanceos se calculan dentro de cada tramo continuo; retirar los giros no pega tramos separados.
-- **Giros.** Un episodio por encima de `turn_threshold` solo cuenta como giro si dura al menos `turn_min_duration_s`; los más cortos (el balanceo del pie supera el umbral) se ignoran y se cuentan en `n_giros_descartados`.
+- **Tiempo real.** Cada serie exige `_time`. Las marcas de `_time` son de recepción en el móvil y llegan en ráfagas, mientras que el sensor muestrea a ritmo constante. Por eso la frecuencia efectiva se mide como muestras por segundo de señal continua (no depende de las ráfagas, que se informan como `irregularidad_tiempo`) y, con `time_grid: uniform`, las muestras de cada tramo continuo se recolocan a paso constante: no se interpola ni se añaden o quitan filas, solo se corrige el instante de cada muestra. `processing.fs` (50 Hz) es la nominal; como la real depende del sensor, las series distintas se señalan en `fs_desviada` y se resumen en nivel 1 (`INFO_FS_RATES`).
+- **Recepción retrasada.** Antes de buscar huecos, en cada intervalo de más de 100 ms entre filas se cuentan las muestras recibidas en el intervalo más los 200 ms siguientes y se comparan con las que corresponden por duración. Si llega el 90 % o más, el móvil recibió tarde un bloque completo: no hay hueco y las marcas se reparten de forma uniforme (`intervalos_recuperados`). Si llega menos, es un hueco real y las zancadas que lo atraviesan se excluyen.
+- **Huecos, por grupo de sensores.** Hay dos grupos: IMU (`Ax` a `Gz`) y presión (`S0` a `S2`). Una fila aporta un valor nuevo a un grupo si cambia alguno de sus canales. Si pasan más de `max_gap_s` (100 ms) sin valor nuevo hay un hueco y la serie se corta para ese grupo; hasta ese umbral las filas sin valor nuevo se interpolan. Nada se sustituye por cero. En la presión la regla se aplica siempre y se exige estar fuera de huecos al menos `min_coverage` (80 %) del tiempo.
+- **Calidad de la IMU.** Con el pie quieto, la IMU repite el mismo valor y eso es una medida válida, no un hueco: la regla de los 100 ms se aplica solo con el pie en movimiento (giroscopio por encima de 100 °/s en las muestras vecinas, o la presión cambiando de estado). La IMU de una serie es válida si, mientras el pie se mueve, repite valor en menos del 10 % de las filas (`imu_repeticion_en_movimiento_prc`, `imu_valida`); si no, no se informan longitud, altura ni giros.
+- **Qué cubre la hipótesis de continuidad.** No hay contador de muestra ni de paquete en los datos. Dentro de un tramo sin huecos se supone que no falta ninguna muestra. Eso cubre las ráfagas, los retrasos de recepción y los huecos que dejan menos del 90 % de las muestras esperadas. No cubre las pérdidas pequeñas que no dejan un intervalo de más de 100 ms ni bajan del 90 %: en ese caso el tiempo del tramo queda ligeramente comprimido.
+- **Vertical estimada.** El calcetín no siempre queda igual de orientado. En cada serie se estima la dirección de la gravedad con las muestras en reposo y se proyectan sobre ella la aceleración (`Av`, vertical) y el giroscopio (`Wv`, giro en torno a la vertical). `inclinacion_grados` es el ángulo entre esa vertical y el eje `Ay`; si no hay reposo utilizable se usan `Ay` y `Gy` y `vertical_estimada` es falso.
+- **Zancadas por contacto de talón.** `S2` es el talón; `S0` y `S1`, el antepié. Un contacto de talón es el paso de descargado a cargado de `S2`. Dos contactos no pueden estar a menos de `cycle_min_s` (0,8 s) y una zancada vale si dura entre 0,8 y 2,5 s. La calidad de la presión se comprueba antes de detectar; si no es suficiente no se cuenta nada, y no se cambia a otra señal. La cadencia es 60 entre el tiempo medio de zancada, y solo se informa con el mínimo de zancadas válidas de la prueba.
+- **Mínimo de zancadas por prueba.** 6MWT: 30 en el ensayo completo y 20 en cada minuto que compara el decaimiento. T25FW: 4, juntando las zancadas de los intentos del mismo paciente y día; el resultado es orientativo y aparece en `Datos_Pacientes` (cada intento por separado queda sin cadencia). TUG: no se informan cadencia, fases, longitud, altura ni asimetría; su métrica es la duración. 2MWT: 10 (provisional). El mínimo aplicado está en la columna `min_zancadas`.
+- **Giros por ángulo acumulado.** La velocidad de giro en torno a la vertical se suaviza para quitar la oscilación de cada zancada. Un episodio tiene un núcleo por encima de `turn_threshold` y se extiende a ambos lados hasta bajar de `turn_extend_threshold`, para no perder el ángulo del arranque y del final. Es un giro si el ángulo acumulado llega a `turn_min_angle_deg` (90°). Retirar los giros no pega tramos separados.
+- **Fases.** Cada ciclo es una zancada válida. El pie está en el suelo si algún sensor de presión está cargado; el resto del ciclo es balanceo. Un ciclo solo cuenta si su balanceo dura 0,25-0,8 s y ocupa el 20-55 % del ciclo.
+- **Longitud de zancada y altura mínima.** Las dos salen de la misma integración del movimiento del sensor entre dos pies planos consecutivos. Marco global con el eje vertical alineado con la gravedad; la orientación se obtiene integrando el giroscopio y se recalibra con la gravedad en cada pie plano. Condiciones de contorno en cada pie plano: velocidad nula y altura nula (nivel del suelo); la deriva se corrige de forma lineal entre los dos pies planos. La longitud es el avance horizontal, directamente en metros, sin constante que calibrar ni distancia o talla de referencia. La altura (`altura_minima_cm`) es la distancia mínima pie-suelo: el mínimo de la trayectoria vertical durante el balanceo, entre sus dos máximos; si el balanceo no tiene dos máximos, la zancada no aporta altura mínima. Es la altura del sensor respecto a su posición con el pie plano, no la de la puntera. Referencia: Hamacher D, Hamacher D, Taylor WR, Singh NB, Schega L. *Towards clinical application: repetitive sensor position re-calibration for improved reliability of gait parameters.* Gait Posture. 2014;39(4):1146-8. doi:10.1016/j.gaitpost.2014.01.020.
+- **6MWT completo y decaimiento.** Un 6MWT es completo si la ventana del registro dura 360 ± 5 s y hay datos válidos en al menos 5 de sus 6 minutos (`minutos_validos`, `ensayo_6mwt_completo`). El decaimiento compara la cadencia del primer minuto con la del último y solo se calcula si el ensayo es completo y ambos minutos son válidos; si no, queda vacío con el motivo (por ejemplo, `6MWT incompleto: 4 minutos válidos`). Las demás métricas del ensayo se informan igualmente, con su cobertura.
 - **Sin valor en lugar de cero.** Una métrica que no puede calcularse queda vacía, con su `estado_*` y `motivo_*` en la hoja `Ensayos`, y no entra en la media del paciente.
-- **Hoja `Ensayos`.** Añade por pie la frecuencia efectiva, duración real, huecos, cobertura, tiempo y número de giros, modalidad de detección (`accel` o `pressure`) con el recuento de cada una, filtro aplicado, ciclos y balanceos usados y descartados, y la longitud sin recortar.
-- **Hoja `Balanceos`.** Una fila por balanceo con su altura o su causa de exclusión.
+- **Comprobación entre pies.** Sin eventos anotados, la hoja `Asimetria` compara el número de zancadas de los dos pies (`diferencia_zancadas`); `zancadas_coherentes` es cierto si difieren como mucho en una por tramo continuo.
+- **Hoja `Zancadas`.** Una fila por zancada integrada, con su longitud, altura mínima y máxima, o la causa de exclusión.
+- **Validación.** No hay eventos anotados ni medidas de otro dispositivo. La comprobación disponible es visual, en Grafana, más las comprobaciones internas (coherencia entre pies y tiempo de zancada dentro de la banda).
 
-Siguen sin calibrar o validar, y así se marcan: detector de giros, estimador de longitud (`stride_calibrado` es siempre falso), altura por doble integración y polaridad de la presión. Las preguntas abiertas están en `DUDAS.pdf`.
+Siguen sin validar con una referencia, y así se marcan: polaridad de la presión, valores con los que se delimita un giro, longitud de zancada y altura mínima. Las preguntas abiertas están en `DUDAS.pdf`.
 
 ### Migración del HDF5 antiguo
 
@@ -124,63 +134,36 @@ python scripts/migrar_hdf5_antiguo.py
 
 Pasa al almacén actual las series del archivo único anterior que coinciden con el registro en paciente, test y ventana temporal, aplicando la misma normalización que una descarga. No consulta InfluxDB ni modifica el archivo antiguo. Las series rechazadas se listan y hay que descargarlas.
 
-## Paquete heredado (`pkgs/`)
+## La hora de los datos
 
-`pipeline_test.py` y `graficas_tfg.py` solo usan de `pkgs/` la configuración (`msConfig`), los mensajes (`msTools.i18n`) y las utilidades de tiempo y de Flux (`msTools.timeutils`, `msTools.flux`); un test lo comprueba. La API, `DataManager`, `MovementDetector` y `CodeIDProcessor` no intervienen en el pipeline.
+- **Registro (`tests.csv`).** Guarda instantes reales con zona horaria: `+01` en invierno y `+02` en verano. `19:24+01` son las 18:24 UTC reales.
+- **InfluxDB.** Guarda la hora de reloj de Madrid etiquetada como UTC. Desde noviembre de 2025 todo lo verificable es coherente con eso.
+- **Qué hace el pipeline.** `msTools.timeutils.experiment_wallclock` descarta el desfase del registro y se queda con la hora de reloj (`19:24`), que es la que se busca en InfluxDB. No convierte a UTC. Si un evento anterior a noviembre de 2025 vuelve sin datos, se avisa en nivel 1 (`INFO_EMPTY_BEFORE_COHERENT_DATE`).
 
-- **Credenciales:** ninguna está escrita en el código. La API exige `MSGAIT_API_KEY` en el entorno y, si falta, rechaza las peticiones protegidas (no hay clave por defecto).
-- **Flux:** todos los valores se insertan con `msTools.flux.flux_string`, que escapa comillas y barras, y los rangos se validan con `flux_range`.
-- **PostgreSQL:** la conexión se abre al usarla, no al construir `DataManager`; `postgresql.connect_timeout` es opcional. Las escrituras validan cada fila con el modelo de su tabla, usan identificadores entre comillas, no modifican el DataFrame recibido y propagan los errores tras deshacer la transacción.
+## Paquete heredado (`pkgs/`), fuera del alcance
+
+`msfeat-pipeline` y `msfeat-graficas` solo usan de `pkgs/` la parte compartida: la configuración (`msConfig`), los mensajes (`msTools.i18n`) y las utilidades de tiempo y de Flux (`msTools.timeutils`, `msTools.flux`); un test lo comprueba. La API, `DataManager`, `MovementDetector`, `CodeIDProcessor`, `ms_monitoring`, `msgait.service`, `consulta_influxdb.py` e `InfluxDBms/` quedan fuera del TFG y se conservan sin mantener. La sección `movement` ya no está en la plantilla de configuración: solo la usa el detector heredado, que tiene su propio `pkgs/.config.yaml`.
+
+Lo que se corrigió en ese código antes de fijar el alcance:
+
+- **Credenciales:** ninguna está escrita en el código. La API exige `MSGAIT_API_KEY` en el entorno y, si falta, rechaza las peticiones protegidas.
+- **Flux:** todos los valores se insertan con `msTools.flux.flux_string`.
+- **PostgreSQL:** la conexión se abre al usarla; las escrituras validan cada fila, usan identificadores entre comillas, no modifican el DataFrame recibido y propagan los errores.
 - **Sin implementar:** `GaitClassifier` y `TrajectoryAnalyzer` lanzan `NotImplementedError`.
 
-Estas correcciones solo están probadas con simulaciones (`tests/test_access_lr.py`), no contra un PostgreSQL real.
-
-## Qué valida la configuración y cuándo
-
-- **Por tarea.** Cada comando carga solo las conexiones que usa. `pipeline_test.py` necesita InfluxDB; con `--stored-only` o `--audit`, y en `graficas_tfg.py`, no se exige ninguna variable de base de datos. `--check-config` valida todo lo declarado.
-- **Parámetros de análisis**, separados de las conexiones: `batch.test_type` (texto no vacío), `project.language` (`es` o `en`), bandas y umbrales de `movement`, y `processing` (ver arriba).
-- **Rutas.** El registro de entrada y las salidas (`h5_path`, `output_dataset`) no pueden ser el mismo archivo.
-
-## Idioma de los mensajes
-
-`project.language` admite `es` (por defecto) y `en`. Cambia los mensajes de log, los errores y los textos de las gráficas. No cambia los nombres de hojas y columnas del Excel, la ayuda de la línea de órdenes ni los errores de configuración (se producen antes de conocer el idioma).
-
-Los textos en español del código son los identificadores; `pkgs/locales/en/LC_MESSAGES/msGait.po` tiene su traducción. Tras añadir o cambiar un mensaje:
-
-```bash
-python scripts/traducciones.py --list     # mensajes sin traducir
-python scripts/traducciones.py            # compila los catálogos .mo (se versionan)
-```
-
-## Formatos, unidades y límites de las métricas
-
-Hoja `Ensayos`, una fila por evento y pie. Una celda vacía significa "no calculable"; el motivo está en `motivo_*`.
-
-| Columna | Unidad | Qué es | Límite conocido |
-|---|---|---|---|
-| `pasos` | recuento | Picos detectados en un pie (zancadas de ese pie) | Detector sin validar con eventos anotados |
-| `cadencia` | picos por minuto | `pasos` entre el tiempo de marcha analizado | Banda de plausibilidad 30-200 configurable |
-| `apoyo_prc`, `balanceo_prc` | % del ciclo | Media por ciclo completo, con tiempos reales | Depende de la polaridad de la presión (`pressure_stance_is_low`) |
-| `decaimiento_prc` | % | Pérdida de cadencia entre el primer y el último minuto (6MWT) | Requiere duración y cobertura mínimas |
-| `stride_length_cm` | cm | Estimador empírico a partir de `Ay` | No calibrado (`stride_calibrado` es falso) |
-| `step_height_cm` | cm | Doble integración de `Ay` en cada balanceo | No validado |
-| `symmetry_index` (hoja `Asimetria`) | % (0-200) | Diferencia de cadencia entre pies sobre su media | Solo con los dos pies del mismo evento |
-| `fs_efectiva` | Hz | Muestras por segundo de señal continua | — |
-| `duracion_real_seg`, `tiempo_*_seg` | s | Medidos con `_time` | — |
-
-Aceleraciones en g y giroscopio en grados por segundo, según se asume en el código; las horas son la hora civil de Madrid del registro, sin convertir a UTC.
+Solo está probado con simulaciones (`tests/test_access_lr.py`); no hay base PostgreSQL de pruebas. Limitación conocida, deducida del código y no comprobada con datos: las tablas heredadas se rellenan con la hora de reloj de InfluxDB etiquetada como UTC, pero `ensure_utc()` convierte las consultas a UTC real, así que puede haber un desfase de 1-2 h entre lo que se guarda y lo que se busca.
 
 ## Gráficas
 
 ```bash
-python graficas_tfg.py                                  # lee paths.output_dataset
-python graficas_tfg.py --data otro.xlsx --out carpeta --verbose 2
+msfeat-graficas                                         # lee paths.output_dataset
+msfeat-graficas --data otro.xlsx --out carpeta --verbose 2
 ```
 
 Lee el Excel del pipeline (necesita las hojas `Datos_Pacientes`, `Ensayos` y `Procedencia`) y escribe en `resultados_graficos/`. Todas las figuras son exploratorias y llevan al pie el archivo de origen, su fecha, el commit, la huella de la configuración y el tamaño de muestra.
 
 - **Boxplots y asimetría:** un valor por paciente, con n >= 3. El eje de la asimetría cubre todo el rango del índice (0-200 %) y se anota cuántos pacientes no tienen asimetría calculable. La línea del 10 % es una referencia sin significado clínico acreditado.
-- **Correlaciones:** Spearman por pares, cada par con sus propios casos completos y n >= 10; valores p ajustados por FDR (Benjamini-Hochberg, 0,05). Junto a cada matriz se guarda `correlaciones_<test>.csv` con N, rho, p, p ajustado y la causa de exclusión de cada par.
+- **Correlaciones:** exploratorias. Spearman por pares, cada par con sus propios casos completos y n >= 10; valores p ajustados por FDR (Benjamini-Hochberg, 0,05). Los pares relacionados por construcción no se calculan ni entran en el ajuste: apoyo y balanceo del mismo pie, zancadas y cadencia de zancada del mismo pie, e índice de simetría con la cadencia de cada pie. Junto a cada matriz se guarda `correlaciones_<test>.csv` con N, rho, p, p ajustado y la causa de exclusión de cada par.
 - **Dispersión:** cadencia frente a fase de apoyo, un punto por ensayo y pie, un color por pie; los puntos huecos tienen alguna de las dos métricas en estado WARNING.
 
 ## Benchmark
@@ -195,8 +178,14 @@ Mide por etapa (consulta, normalización, escritura, lectura y métricas) el tie
 ## Verificación offline
 
 ```bash
-python -m pip install pytest
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest -q tests
+poetry run pytest -q tests
 ```
 
 Se comprueban precedencia, tipos, secretos literales, rutas, ausencia de variables, YAML inválido y opciones transmitidas a los clientes simulados. La variable desactiva plugins ajenos al proyecto: el plugin Dash global del entorno revisado falla antes de ejecutar pruebas. No se consultan bases de datos ni se exportan resultados reales.
+
+## Pacientes excluidos, reintentos y eventos detectados
+
+- **`registry.exclude_codeids`.** Lista de pacientes cuyos eventos no se procesan (por ejemplo `[AMIR-48]`, pruebas hechas sin los calcetines puestos). No se consultan ni se borran del registro: aparecen en `Estado_Eventos` con estado `EXCLUDED`.
+- **Reintentos.** `influxdb.retry_waits_s` solo se aplica a errores de red (conexión rechazada o cortada, tiempo agotado, respuestas 5xx). Un 401 o una consulta mal formada no se reintentan. `influxdb.connect_timeout` (ms) limita el tiempo para conectar y es independiente de `timeout`, el de lectura.
+- **Eventos detectados.** Junto al almacén de señales se guarda, por evento, un HDF5 con los contactos de talón, las zancadas y los giros detectados, y con la versión del pipeline y la huella de `processing`. Sirve para reconstruir de dónde sale cada cifra del Excel.
+- **Carpeta de trabajo.** Las rutas relativas y la configuración por defecto se buscan en la carpeta del repositorio. Si el paquete se instala fuera de ella, se usa la carpeta actual o la que indique `MSFEAT_HOME`.

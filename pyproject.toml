@@ -1,43 +1,49 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "gait_analysis"
 version = "0.1.0"
 description = "Extracción de señales de marcha y cálculo de métricas (TFG, 2026_msFeat_LR)"
 readme = "README.md"
-# Intervalo propuesto: 3.11 a 3.13. Probado hasta ahora solo con Python 3.13.
-requires-python = ">=3.11"
-classifiers = [
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-]
-# Lo que necesita pipeline_test.py (InfluxDB -> HDF5 -> métricas -> Excel).
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11,<3.14"
+# Lo que necesita el pipeline (InfluxDB -> HDF5 -> métricas -> Excel). Las versiones exactas
+# con las que se ha probado están en poetry.lock; el límite inferior es la serie probada.
 dependencies = [
-    "pandas",
-    "numpy",
-    "scipy",
-    "influxdb-client",
-    "tables",
-    "openpyxl",
-    "pyyaml",
-    "python-dotenv>=1.0",
+    "pandas>=3.0,<4",
+    "numpy>=2.1,<3",
+    "scipy>=1.14,<2",
+    "influxdb-client>=1.40,<2",
+    "urllib3>=2.0,<3",
+    "tables>=3.10,<4",
+    "openpyxl>=3.1,<4",
+    "pyyaml>=6.0,<7",
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]
-# python graficas_tfg.py
-graficos = ["matplotlib", "seaborn"]
-# Paquete heredado pkgs/: DataManager, MovementDetector, CodeIDProcessor
-pg = ["psycopg2>=2.9.5", "pydantic>=2", "xlsxwriter"]
-# pkgs/api.py
-api = ["gait_analysis[pg]", "fastapi", "uvicorn[standard]"]
+# msfeat-graficas
+graficos = ["matplotlib>=3.9,<4", "seaborn>=0.13,<1"]
+# Paquete heredado (fuera del alcance del TFG): DataManager, MovementDetector, CodeIDProcessor
+pg = ["psycopg2>=2.9.5,<3", "pydantic>=2,<3", "xlsxwriter>=3,<4"]
+# API heredada (fuera del alcance del TFG): pkgs/api.py
+api = ["psycopg2>=2.9.5,<3", "pydantic>=2,<3", "xlsxwriter>=3,<4", "fastapi>=0.110,<1", "uvicorn[standard]>=0.29,<1"]
 # Tests y generación de DUDAS.pdf
-dev = ["gait_analysis[graficos]", "pytest", "httpx", "reportlab"]
+dev = ["matplotlib>=3.9,<4", "seaborn>=0.13,<1", "pytest>=8,<10", "httpx>=0.27,<1", "reportlab>=4,<6"]
 
-# El paquete instalable contiene la biblioteca; pipeline_test.py, GaitMetricsCalculator.py y
-# graficas_tfg.py se ejecutan desde la carpeta del repositorio (instalación editable).
-[tool.setuptools.packages.find]
-where = ["src", "pkgs"]
-include = ["gait_analysis*", "msConfig*", "msTools*", "msGait*", "msCodeID*"]
+[project.scripts]
+msfeat-pipeline = "gait_analysis.pipeline:main"
+msfeat-graficas = "gait_analysis.plots:main"
+
+[tool.poetry]
+# El paquete contiene el pipeline (gait_analysis) y la parte de pkgs/ que este usa; los
+# catálogos de traducción viajan dentro de msTools (pkgs/msTools/locales).
+packages = [
+    { include = "gait_analysis", from = "src" },
+    { include = "msConfig", from = "pkgs" },
+    { include = "msTools", from = "pkgs" },
+    { include = "msGait", from = "pkgs" },
+    { include = "msCodeID", from = "pkgs" },
+]
+
+[build-system]
+requires = ["poetry-core>=2.0,<3"]
+build-backend = "poetry.core.masonry.api"

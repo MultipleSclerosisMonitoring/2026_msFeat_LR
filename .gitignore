@@ -54,7 +54,7 @@ cover/
 # Translations
 *.mo
 # Los catálogos compilados del proyecto sí se versionan (scripts/traducciones.py)
-!pkgs/locales/**/*.mo
+!pkgs/msTools/locales/**/*.mo
 *.pot
 
 # Django stuff:

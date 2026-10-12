@@ -15,11 +15,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCALES = ROOT / "pkgs" / "locales"
+LOCALES = ROOT / "pkgs" / "msTools" / "locales"
 DOMAIN = "msGait"
 # Archivos cuyos mensajes pasan por la traducción.
 SOURCES = (
-    "pipeline_test.py", "GaitMetricsCalculator.py", "graficas_tfg.py", "src/gait_analysis",
+    "src/gait_analysis",
     "scripts/migrar_hdf5_antiguo.py", "benchmarks/benchmark_pipeline.py",
 )
 

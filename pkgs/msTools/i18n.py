@@ -41,7 +41,7 @@ from typing import Iterable, Optional
 # ---------------------------- Configuration ---------------------------------
 DOMAIN: str = "msGait"
 BASE_DIR = Path(__file__).resolve().parent
-LOCALES_DIR = (BASE_DIR / ".." / "locales").resolve()
+LOCALES_DIR = BASE_DIR / "locales"
 
 # Store the active translation object. Exposed by init_translation().
 _translation: Optional[_gettext.NullTranslations] = None

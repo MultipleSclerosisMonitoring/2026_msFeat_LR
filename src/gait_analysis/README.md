@@ -8,12 +8,12 @@ This package contains the core logic for the gait signal extraction and processi
 * **`registry.py`**: validates the whole CSV registry and returns one result per row.
 * **`query.py`**: the single Flux query (filtered by `_measurement` and `CodeID`, metadata kept) and the per-foot normalisation (device selection, ordering, de-duplication).
 * **`storage.py`**: one HDF5 file per event published atomically (temporary file, verification, replace), single-writer lock, JSON Lines manifest and atomic Excel publication.
-* **`extractor.py`**: `acquire_trial`, the shared path query → normalise → store used by `pipeline_test.py`.
+* **`extractor.py`**: `acquire_trial`, the shared path query → normalise → store used by `pipeline.py`.
 * **`logging_utils.py`**: verbose levels 0/1/2 for the `msGait.*` loggers.
 
 ### 2. Validation
 * **Registry**: every CSV row is validated before any connection (`registry.py`); invalid rows are reported with status `INVALID_ROW`.
-* **Configuration**: validated by `msConfig.load_config` (connections) and by `ProcessingConfig` in `GaitMetricsCalculator.py` (processing parameters).
+* **Configuration**: validated by `msConfig.load_config` (connections) and by `ProcessingConfig` in `metrics.py` (processing parameters).
 * **Time**: registry timestamps are used as Madrid wall-clock time without converting to UTC, because the historical InfluxDB data stores wall-clock time labelled as UTC (`msTools.timeutils`).
 
 ## Internal Structure

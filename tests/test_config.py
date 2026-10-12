@@ -99,23 +99,23 @@ def test_extractor_uses_shared_settings_and_h5_path(tmp_path):
     with patch('gait_analysis.extractor.InfluxDBClient') as client:
         extractor=GaitDataExtractor(str(path))
         assert extractor._h5_database == str(tmp_path/'out/custom.h5')
-        assert client.call_args.kwargs['timeout']==45000
+        assert client.call_args.kwargs['timeout']==(10000, 45000)
         assert client.call_args.kwargs['verify_ssl'] is False
         extractor.close()
         client.return_value.close.assert_called_once()
 
 
 def test_pipeline_and_legacy_clients_use_shared_settings(tmp_path):
-    from pipeline_test import GaitPipeline
+    from gait_analysis.pipeline import GaitPipeline
     from InfluxDBms.cInfluxDB import cInfluxDB
     from msTools.data_manager import DataManager
     path=fixture_config(tmp_path,{'postgresql':{'host':'localhost','user':'test','password':'dummy','database':'db','port':'5544'}})
-    with patch('pipeline_test.InfluxDBClient') as direct, patch('InfluxDBms.cInfluxDB.InfluxDBClient') as legacy, patch('msTools.data_manager.InfluxDBClient') as inf, patch('msTools.data_manager.psycopg2.connect') as pg:
+    with patch('gait_analysis.pipeline.InfluxDBClient') as direct, patch('InfluxDBms.cInfluxDB.InfluxDBClient') as legacy, patch('msTools.data_manager.InfluxDBClient') as inf, patch('msTools.data_manager.psycopg2.connect') as pg:
         pipeline=GaitPipeline(str(path))
         db=cInfluxDB(str(path))
         manager=DataManager(str(path))
         for client in (direct,legacy,inf):
-            assert client.call_args.kwargs['timeout']==45000
+            assert client.call_args.kwargs['timeout']==(10000, 45000)
             assert client.call_args.kwargs['verify_ssl'] is False
         assert pg.call_count==0  # PostgreSQL se conecta al usarlo, no al construir
         manager.pg_conn

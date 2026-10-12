@@ -805,3 +805,79 @@ msgstr "INFO_BENCH_CASE: Event {0}, repetition {1}/{2}"
 #: GaitMetricsCalculator.py
 msgid "processing.time_grid debe ser uno de {0}."
 msgstr "processing.time_grid must be one of {0}."
+
+#: pipeline_test.py
+msgid "DEBUG_FEET_MISMATCH: Evento {0}: {1} zancadas en el pie izquierdo y {2} en el derecho (diferencia admitida: {3:.0f})"
+msgstr "DEBUG_FEET_MISMATCH: Event {0}: {1} strides on the left foot and {2} on the right (allowed difference: {3:.0f})"
+
+#: GaitMetricsCalculator.py
+msgid "processing.max_interpolation_s no puede ser mayor que processing.max_gap_s."
+msgstr "processing.max_interpolation_s cannot be greater than processing.max_gap_s."
+
+#: GaitMetricsCalculator.py
+msgid "processing.swing_max_prc debe ser menor que 100."
+msgstr "processing.swing_max_prc must be lower than 100."
+
+#: GaitMetricsCalculator.py
+msgid "DEBUG_SIGNAL_GROUPS: cobertura IMU {0:.0%} ({1} huecos), cobertura presión {2:.0%} ({3} huecos), inclinación respecto a Ay {4:.0f} grados (vertical estimada: {5})"
+msgstr "DEBUG_SIGNAL_GROUPS: IMU coverage {0:.0%} ({1} gaps), pressure coverage {2:.0%} ({3} gaps), tilt from Ay {4:.0f} degrees (vertical estimated: {5})"
+
+#: GaitMetricsCalculator.py
+msgid "processing.heel_channel debe ser uno de {0}."
+msgstr "processing.heel_channel must be one of {0}."
+
+#: GaitMetricsCalculator.py
+msgid "processing.{0} debe estar entre 0 y 1."
+msgstr "processing.{0} must be between 0 and 1."
+
+#: graficas_tfg.py
+msgid "Cadencia (zancadas por minuto)"
+msgstr "Cadence (strides per minute)"
+
+#: GaitMetricsCalculator.py
+msgid "processing.turn_extend_threshold no puede ser mayor que processing.turn_threshold."
+msgstr "processing.turn_extend_threshold cannot be greater than processing.turn_threshold."
+
+#: GaitMetricsCalculator.py
+msgid "processing.sixmwt_duration_s debe ser al menos el doble de processing.decay_block_s."
+msgstr "processing.sixmwt_duration_s must be at least twice processing.decay_block_s."
+
+#: GaitMetricsCalculator.py
+msgid "processing.sixmwt_min_valid_minutes no puede superar el número de bloques del ensayo."
+msgstr "processing.sixmwt_min_valid_minutes cannot exceed the number of blocks in the trial."
+
+#: GaitMetricsCalculator.py
+msgid "DEBUG_6MWT_MINUTES: ventana de {0:.0f} s, {1} de {2} minutos válidos, completo: {3}"
+msgstr "DEBUG_6MWT_MINUTES: window of {0:.0f} s, {1} of {2} valid minutes, complete: {3}"
+
+#: pipeline_test.py
+msgid "INFO_PARALLEL_QUERIES: {0} consultas simultáneas a InfluxDB; escritura y análisis en un único hilo"
+msgstr "INFO_PARALLEL_QUERIES: {0} simultaneous queries to InfluxDB; writing and analysis in a single thread"
+
+#: GaitMetricsCalculator.py
+msgid "DEBUG_SIGNAL_QUALITY: IMU repetida en movimiento {0:.1f} % (válida: {1}); {2} intervalos largos recuperados como recepción retrasada"
+msgstr "DEBUG_SIGNAL_QUALITY: IMU repeated while moving {0:.1f} % (valid: {1}); {2} long intervals recovered as delayed reception"
+
+#: src/gait_analysis/extractor.py
+msgid "WARN_QUERY_RETRY: Evento {0}: fallo de conexión ({1}); reintento {2} de {3} en {4:g} s"
+msgstr "WARN_QUERY_RETRY: Event {0}: connection failure ({1}); retry {2} of {3} in {4:g} s"
+
+#: src/gait_analysis/extractor.py
+msgid "INFO_EMPTY_BEFORE_COHERENT_DATE: El evento {0} es anterior a {1}; antes de esa fecha no está comprobado que la hora del registro y la de InfluxDB coincidan"
+msgstr "INFO_EMPTY_BEFORE_COHERENT_DATE: Event {0} is earlier than {1}; before that date it has not been verified that the registry time and the InfluxDB time agree"
+
+#: pipeline_test.py
+msgid "INFO_QUALITY_SUMMARY: {0} de {1} series con cadencia; sin cadencia por motivo: {2}"
+msgstr "INFO_QUALITY_SUMMARY: {0} of {1} series with cadence; without cadence by reason: {2}"
+
+#: pipeline_test.py
+msgid "WARN_DERIVED_NOT_SAVED: Evento {0}: no se guardaron los eventos detectados ({1})"
+msgstr "WARN_DERIVED_NOT_SAVED: Event {0}: the detected events were not saved ({1})"
+
+#: GaitMetricsCalculator.py
+msgid "processing.min_strides debe asignar a cada prueba un entero mayor que cero."
+msgstr "processing.min_strides must map each test to an integer greater than zero."
+
+#: src/gait_analysis/storage.py
+msgid "DEBUG_DERIVED_SAVED: {0} guardado ({1})"
+msgstr "DEBUG_DERIVED_SAVED: {0} saved ({1})"

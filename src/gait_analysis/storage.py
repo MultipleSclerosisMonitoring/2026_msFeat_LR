@@ -323,6 +323,64 @@ def read_meta(h5_path: str | Path, key: str) -> dict[str, Any] | None:
         return getattr(store.get_storer(side).attrs, _META_ATTR, None)
 
 
+def derived_dir_for(h5_path: str | Path) -> Path:
+    """Devuelve el directorio de los eventos detectados, junto al almacén de señales.
+
+    Args:
+        h5_path (str | Path): Valor de ``paths.h5_path``.
+
+    Returns:
+        Path: Directorio ``<nombre>_derivados``. Va aparte de las señales porque
+        su contenido depende de la versión del algoritmo y de la configuración.
+    """
+    path = Path(h5_path)
+    return path.with_name(f"{path.stem}_derivados")
+
+
+def write_derived(h5_path: str | Path, trial: Trial, tables: dict[str, pd.DataFrame], meta: dict[str, Any]) -> Path | None:
+    """Guarda de forma atómica lo detectado en un evento, para poder reconstruir sus métricas.
+
+    Escribe ``p_{codeid}/{test}/trial_{id}.h5`` con una tabla por tipo de
+    evento (contactos de talón, zancadas, giros) y, como atributos, la versión
+    del pipeline y la huella de la configuración con que se obtuvieron.
+
+    Args:
+        h5_path (str | Path): Valor de ``paths.h5_path``.
+        trial (Trial): Evento al que pertenecen las tablas.
+        tables (dict[str, pd.DataFrame]): Tabla por nombre; las vacías se omiten.
+        meta (dict[str, Any]): Atributos (versión, huella de configuración, fechas).
+
+    Returns:
+        Path | None: Archivo publicado, o ``None`` si no hay nada que guardar.
+
+    Raises:
+        StorageError: Si falla la escritura o el reemplazo.
+    """
+    tables = {name: table for name, table in tables.items() if table is not None and not table.empty}
+    if not tables:
+        return None
+    target = derived_dir_for(h5_path) / f"p_{trial.codeid}" / trial.test_type / f"trial_{trial.trial_id}.h5"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with pd.HDFStore(str(temporary), mode="w") as store:
+                for name, table in tables.items():
+                    export = table.copy()
+                    for column in export.columns:
+                        if not pd.api.types.is_numeric_dtype(export[column]) and not pd.api.types.is_datetime64_any_dtype(export[column]):
+                            export[column] = export[column].astype(str).astype(object)
+                    store.put(name, export, format="table")
+                    setattr(store.get_storer(name).attrs, _META_ATTR, meta)
+        os.replace(temporary, target)
+    except Exception as error:
+        temporary.unlink(missing_ok=True)
+        raise StorageError(_("No se pudo escribir el evento {0}: {1}").format(trial.trial_id, error)) from error
+    logger.debug(_("DEBUG_DERIVED_SAVED: {0} guardado ({1})").format(target, ", ".join(tables)))
+    return target
+
+
 class Manifest:
     """Registro JSON Lines de eventos y ejecuciones, situado junto al almacén.
 

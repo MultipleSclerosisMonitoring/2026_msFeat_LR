@@ -1,6 +1,4 @@
 import logging
-import os
-import sys
 import time
 import uuid
 from datetime import datetime
@@ -8,9 +6,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 
 import pandas as pd
+import urllib3
 from influxdb_client import InfluxDBClient
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'pkgs'))
 from msTools.timeutils import influx_wallclock_z
 from msConfig import influx_client_options, load_config
 from msTools.i18n import _
@@ -27,6 +25,69 @@ from .storage import Manifest, SignalStore, StorageError, audit_store, manifest_
 logger = logging.getLogger("msGait.Extractor")
 
 
+# Desde esta fecha todo lo verificable entre el registro y InfluxDB es coherente en hora.
+COHERENT_SINCE = "2025-11-01"
+
+
+def is_network_error(error: BaseException) -> bool:
+    """Indica si un error es de red y, por tanto, puede resolverse reintentando.
+
+    Son de red los tiempos de espera agotados, las conexiones rechazadas o
+    cortadas y las respuestas 5xx del servidor. No lo son las respuestas 4xx
+    (autenticación, consulta mal formada) ni los errores de contenido.
+
+    Args:
+        error (BaseException): Excepción lanzada por la consulta.
+
+    Returns:
+        bool: ``True`` si conviene reintentar.
+    """
+    status = getattr(error, "status", None)
+    if isinstance(status, int):
+        return status >= 500
+    if isinstance(error, (ConnectionError, TimeoutError, urllib3.exceptions.HTTPError)):
+        return True
+    return isinstance(error, OSError) and not isinstance(error, (FileNotFoundError, PermissionError))
+
+
+def fetch_with_retries(client: Any, bucket: str, measurement: str, trial: Trial,
+                       retry_waits: Iterable[float] = ()) -> tuple[pd.DataFrame, int]:
+    """Consulta un evento y reintenta si falla la conexión.
+
+    Lo que ha fallado en las ejecuciones reales es la conexión, no la consulta:
+    solo se reintentan los errores de red (:func:`is_network_error`), tras cada
+    espera indicada. Un error de autenticación o de consulta no se arregla
+    reintentando y se devuelve a la primera.
+
+    Args:
+        client (Any): Cliente ``InfluxDBClient`` ya conectado.
+        bucket (str): Bucket de InfluxDB.
+        measurement (str): Valor de ``_measurement`` a seleccionar.
+        trial (Trial): Evento validado del registro.
+        retry_waits (Iterable[float]): Segundos de espera antes de cada reintento.
+
+    Returns:
+        tuple[pd.DataFrame, int]: Señales del evento y número de consultas realizadas.
+
+    Raises:
+        Exception: El último error, con el atributo ``attempts``, si se agotan
+            los reintentos o el error es de contenido.
+    """
+    waits = list(retry_waits)
+    attempts = 0
+    while True:
+        attempts += 1
+        try:
+            return fetch_trial_frame(client, bucket, measurement, trial), attempts
+        except Exception as error:
+            if not is_network_error(error) or attempts > len(waits):
+                error.attempts = attempts
+                raise
+            wait = waits[attempts - 1]
+            logger.warning(_("WARN_QUERY_RETRY: Evento {0}: fallo de conexión ({1}); reintento {2} de {3} en {4:g} s").format(trial.trial_id, error, attempts, len(waits), wait))
+            time.sleep(wait)
+
+
 def acquire_trial(
     client: Any,
     bucket: str,
@@ -37,6 +98,8 @@ def acquire_trial(
     run_id: str,
     completed: Dict[str, list[str]] | None = None,
     load_stored: bool = False,
+    retry_waits: Iterable[float] = (),
+    prefetched: Any = None,
 ) -> tuple[TrialResult, Dict[str, pd.DataFrame]]:
     """Obtiene, normaliza y persiste las señales de un evento.
 
@@ -56,6 +119,10 @@ def acquire_trial(
             manifest. Si se indica, los que conservan sus claves no se consultan.
         load_stored (bool): Con ``completed``, devolver las señales almacenadas
             en lugar de marcar el evento como ``SKIPPED``.
+        retry_waits (Iterable[float]): Esperas, en segundos, antes de cada
+            reintento de una consulta fallida por conexión. Vacío: sin reintentos.
+        prefetched (Any): Consulta ya lanzada en otro hilo (``Future`` de
+            :func:`fetch_with_retries`); ``None`` consulta aquí.
 
     Returns:
         tuple[TrialResult, Dict[str, pd.DataFrame]]: Resultado del evento y
@@ -88,9 +155,13 @@ def acquire_trial(
             frames, result.feet = {}, {}
 
     try:
-        raw = fetch_trial_frame(client, bucket, measurement, trial)
+        if prefetched is not None:
+            raw, result.attempts = prefetched.result()
+        else:
+            raw, result.attempts = fetch_with_retries(client, bucket, measurement, trial, retry_waits)
         series = split_series(raw, trial.trial_id)
     except Exception as error:
+        result.attempts = getattr(error, "attempts", result.attempts)
         result.status, result.detail = STATUS_QUERY_ERROR, str(error)
         logger.error(_("ERR_FLUX_QUERY: [!] Error consultando {p}: {err}").format(p=trial.codeid, err=error))
         series = {}
@@ -100,6 +171,8 @@ def acquire_trial(
             logger.warning(_("ERR_TRIAL_EMPTY: [-] {p}: Sin datos en el rango {s}").format(
                 p=trial.codeid, s=trial.start_iso
             ))
+            if pd.Timestamp(trial.start_iso).tz_localize(None) < pd.Timestamp(COHERENT_SINCE):
+                logger.info(_("INFO_EMPTY_BEFORE_COHERENT_DATE: El evento {0} es anterior a {1}; antes de esa fecha no está comprobado que la hora del registro y la de InfluxDB coincidan").format(trial.trial_id, COHERENT_SINCE))
 
     payload: Dict[str, tuple[pd.DataFrame, Dict[str, Any]]] = {}
     for side, foot in series.items():
@@ -247,7 +320,9 @@ class GaitDataExtractor:
             StorageError: Si el almacén está bloqueado o tiene el esquema antiguo.
         """
         test_type = test_type or self.config['batch']['test_type']
-        trials, results = load_registry(self._registry_path(csv_path), test_type, ids)
+        trials, results = load_registry(
+            self._registry_path(csv_path), test_type, ids, self.config.get('registry', {}).get('exclude_codeids'),
+        )
         manifest = Manifest(manifest_path_for(self._h5_database))
         completed = manifest.completed_keys() if missing_only else None
 
@@ -258,7 +333,8 @@ class GaitDataExtractor:
             for position, trial in enumerate(trials, start=1):
                 logger.info(_("INFO_EXTRACT_TRIAL: [{0}/{1}] Evento {2} ({3}, {4})").format(position, len(trials), trial.trial_id, trial.codeid, trial.test_type))
                 result, _frames = acquire_trial(
-                    self._client, self._bucket, self._measurement, store, manifest, trial, run_id, completed
+                    self._client, self._bucket, self._measurement, store, manifest, trial, run_id, completed,
+                    retry_waits=self.config['influxdb'].get('retry_waits_s', ()),
                 )
                 logger.debug(_("DEBUG_TRIAL_COST: Evento {0}: {1:.2f} s, {2:.2f} MB").format(trial.trial_id, result.elapsed_s, result.signal_mem_mb))
                 results.append(result)
