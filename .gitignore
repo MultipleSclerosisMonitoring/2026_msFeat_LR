@@ -222,3 +222,6 @@ data/raw/gait_study_data/
 
 # pdf de dudas
 DUDAS.pdf
+
+# Instrucciones locales para Claude
+CLAUDE.md

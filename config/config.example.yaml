@@ -23,6 +23,7 @@ paths:
   output_folder: ../data/raw
   h5_path: ../data/raw/gait_study_data.h5
   output_dataset: ../DatasetMaestro.xlsx
+  # results_folder: ../data/results   # eventos detectados por ensayo; por defecto, junto a la carpeta del almacén
 processing:
   # Todos los parámetros son opcionales; se muestran los valores por defecto.
   # Ventanas y distancias en segundos: se convierten a muestras con la
@@ -36,8 +37,12 @@ processing:
   max_interpolation_s: 0.1      # hasta ese mismo umbral se interpola; por encima se corta
   reception_window_s: 0.2       # tras un intervalo largo entre filas se cuentan las muestras de los 200 ms siguientes...
   reception_min_fraction: 0.9   # ...y si llega el 90 % de las esperadas es recepción retrasada, no un hueco
-  imu_moving_gyro: 100.0        # el pie se mueve si el módulo del giroscopio supera 100 grados/s (o la presión cambia de estado)
-  imu_max_stale_moving: 0.10    # más del 10 % de filas con la IMU repetida en movimiento: IMU no válida en la serie
+  # Calidad de la IMU: se juzga con la presión, que es independiente del giroscopio.
+  pressure_active_window_s: 1.0     # la presión está activa si en 1 s centrado en la muestra algún sensor varía...
+  pressure_active_min_fraction: 0.25  # ...al menos el 25 % de su rango (p5-p95)...
+  pressure_active_min_units: 20.0   # ...y al menos 20 unidades
+  imu_max_stale_active: 0.30    # IMU válida si repite valor en menos del 30 % de las filas con presión activa
+  imu_min_active_s: 30.0        # con menos de 30 s de presión activa la IMU no es evaluable y sus métricas no se calculan
   min_coverage: 0.8             # fracción mínima del tiempo fuera de huecos, en la presión
   # --- Zancadas válidas mínimas, por prueba (en TUG no se informan métricas de marcha) ---
   # Una prueba que no figure aquí no informa métricas de marcha.
@@ -46,14 +51,16 @@ processing:
     2MWT: 10
     T25FW: 4                    # juntando los intentos del paciente en el mismo día
   min_strides_minute: 20        # en cada minuto que compara el decaimiento
-  t25fw_skip_first_strides: 1   # zancadas de arranque que se descartan en cada pie y cada intento del T25FW
+  skip_first_strides: 1         # zancadas de arranque que se descartan en cada pie al inicio de cada ensayo
   # --- Filtros ---
   filter_order: 4
   pressure_window_s: 0.15
   # --- Calidad del talón: ritmo de marcha si la ventana es larga; rango si es corta ---
-  heel_min_periodicity: 0.3     # autocorrelación mínima del talón en el periodo de zancada (ventana >= 2 x cycle_max_s; provisional)
+  heel_highpass_hz: 0.3         # paso alto que quita la deriva del talón antes de medir su ritmo
+  heel_rhythm_window_s: 20.0    # el ritmo se mide por ventanas de 20 s; las que no lo tienen se excluyen
+  heel_min_periodicity: 0.3     # altura mínima del pico de autocorrelación dentro del periodo de zancada
   pressure_min_range: 40.0      # rango mínimo del talón cuando la ventana no da para medir el ritmo
-  heel_valley_prominence: 0.4   # prominencia mínima del valle de apoyo, como fracción del rango del talón (provisional)
+  heel_valley_prominence: 0.3   # profundidad mínima del valle de apoyo, como fracción del rango del talón
   # --- Orientación: gravedad estimada en reposo ---
   rest_gyro_quantile: 0.25      # fracción de muestras con menos giro candidatas a reposo
   rest_accel_tolerance_g: 0.1   # en reposo, el módulo de la aceleración está a esta distancia de 1 g
@@ -64,10 +71,12 @@ processing:
   turn_extend_threshold: 10.0   # el episodio se extiende hasta bajar de esta velocidad, para no perder ángulo (provisional)
   turn_min_angle_deg: 90.0      # ángulo acumulado mínimo para contar un giro
   turn_min_duration_s: 0.0      # duración mínima adicional; 0 = no se exige
+  turn_margin_before_strides: 3 # zancadas de cada pie que se excluyen antes de cada giro (frenada)
+  turn_margin_after_strides: 2  # y después (arranque); solo si la IMU es válida y hay giros detectados
   min_steady_s: 3.0
   # --- Zancadas: contacto de talón por presión ---
   heel_channel: S2              # S2 = talón; S0 y S1 = antepié
-  pressure_stance_is_low: true  # el valor guardado baja en el apoyo (así se comportan los datos)
+  pressure_stance_is_low: true  # lo que se guarda es una tensión que baja con la carga: valor bajo = apoyo
   cycle_min_s: 0.8              # tiempo de zancada mínimo y separación mínima entre contactos de talón
   cycle_max_s: 2.5              # tiempo de zancada máximo
   swing_min_s: 0.25             # balanceo de un ciclo válido: duración...
@@ -81,9 +90,11 @@ processing:
   sixmwt_duration_s: 360.0      # la ventana del registro debe durar 360 s...
   sixmwt_tolerance_s: 5.0       # ...± 5 s
   sixmwt_min_valid_minutes: 5   # minutos con datos válidos para aceptarlo como completo
+  decay_min_minutes: 4          # minutos con cadencia para ajustar la pendiente; el primero y el último, obligatorios
   # --- Longitud y altura (integración entre pies planos, sin constantes) ---
   stride_ok_min_cm: 30.0        # banda de plausibilidad de la longitud
   stride_ok_max_cm: 150.0
+  t25fw_distance_m: 7.62        # 25 pies; solo para avisar si la suma de longitudes de un intento no cuadra (no valida ni calibra)
   # MTC (Müller 2021). Con el módulo en el tobillo no se calcula; la banda queda para cuando pueda medirse.
   mtc_ok_min_cm: 0.4
   mtc_ok_max_cm: 5.5

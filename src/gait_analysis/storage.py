@@ -323,31 +323,34 @@ def read_meta(h5_path: str | Path, key: str) -> dict[str, Any] | None:
         return getattr(store.get_storer(side).attrs, _META_ATTR, None)
 
 
-def derived_dir_for(h5_path: str | Path) -> Path:
-    """Devuelve el directorio de los eventos detectados, junto al almacén de señales.
+def events_path_for(results_folder: str | Path, trial: Trial) -> Path:
+    """Devuelve el archivo de eventos detectados de un ensayo.
 
     Args:
-        h5_path (str | Path): Valor de ``paths.h5_path``.
+        results_folder (str | Path): Valor de ``paths.results_folder``, una
+            carpeta de resultados separada de los datos en bruto.
+        trial (Trial): Evento del registro.
 
     Returns:
-        Path: Directorio ``<nombre>_derivados``. Va aparte de las señales porque
-        su contenido depende de la versión del algoritmo y de la configuración.
+        Path: ``<results_folder>/eventos/p_{codeid}/{test}/trial_{id}.h5``.
     """
-    path = Path(h5_path)
-    return path.with_name(f"{path.stem}_derivados")
+    return Path(results_folder) / "eventos" / f"p_{trial.codeid}" / trial.test_type / f"trial_{trial.trial_id}.h5"
 
 
-def write_derived(h5_path: str | Path, trial: Trial, tables: dict[str, pd.DataFrame], meta: dict[str, Any]) -> Path | None:
-    """Guarda de forma atómica lo detectado en un evento, para poder reconstruir sus métricas.
+def write_derived(results_folder: str | Path, trial: Trial, tables: dict[str, pd.DataFrame], meta: dict[str, Any]) -> Path | None:
+    """Guarda de forma atómica lo detectado en un ensayo, para poder reconstruir sus métricas.
 
-    Escribe ``p_{codeid}/{test}/trial_{id}.h5`` con una tabla por tipo de
-    evento (contactos de talón, zancadas, giros) y, como atributos, la versión
-    del pipeline y la huella de la configuración con que se obtuvieron.
+    Escribe un archivo por ensayo (:func:`events_path_for`) con una tabla de
+    eventos por pie (``{pie}/eventos``: contactos de talón, despegues, giros y
+    tramos excluidos con su motivo) y otra con las zancadas integradas
+    (``{pie}/zancadas``). Como atributos lleva la versión del código, la huella
+    de la configuración y la fecha de la ejecución. Cada ejecución sustituye el
+    archivo del ensayo.
 
     Args:
-        h5_path (str | Path): Valor de ``paths.h5_path``.
+        results_folder (str | Path): Valor de ``paths.results_folder``.
         trial (Trial): Evento al que pertenecen las tablas.
-        tables (dict[str, pd.DataFrame]): Tabla por nombre; las vacías se omiten.
+        tables (dict[str, pd.DataFrame]): Tabla por clave HDF5; las vacías se omiten.
         meta (dict[str, Any]): Atributos (versión, huella de configuración, fechas).
 
     Returns:
@@ -359,10 +362,10 @@ def write_derived(h5_path: str | Path, trial: Trial, tables: dict[str, pd.DataFr
     tables = {name: table for name, table in tables.items() if table is not None and not table.empty}
     if not tables:
         return None
-    target = derived_dir_for(h5_path) / f"p_{trial.codeid}" / trial.test_type / f"trial_{trial.trial_id}.h5"
-    target.parent.mkdir(parents=True, exist_ok=True)
+    target = events_path_for(results_folder, trial)
     temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}")
     try:
+        target.parent.mkdir(parents=True, exist_ok=True)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             with pd.HDFStore(str(temporary), mode="w") as store:

@@ -23,7 +23,15 @@ VERTICAL_ACCEL = "Av"
 VERTICAL_RATE = "Wv"
 TIME_GRIDS = ("uniform", "received")
 # Métricas por pie que forman las tablas y estadísticas del informe (lista explícita).
-REPORT_METRICS = ("zancadas", "cadencia_zancada", "apoyo_prc", "balanceo_prc", "decaimiento_prc", "stride_length_cm", "excursion_tobillo_cm")
+REPORT_METRICS = ("zancadas", "cadencia_zancada", "apoyo_prc", "balanceo_prc", "decaimiento_prc", "pendiente_cadencia",
+                  "stride_length_cm", "excursion_tobillo_cm")
+# Estado de confianza (OK/WARNING) que acompaña a cada métrica del informe.
+METRIC_STATE = {
+    "zancadas": "estado_cadencia", "cadencia_zancada": "estado_cadencia", "apoyo_prc": "estado_fases",
+    "balanceo_prc": "estado_fases", "decaimiento_prc": "estado_decaimiento", "pendiente_cadencia": "estado_decaimiento",
+    "stride_length_cm": "estado_zancada", "excursion_tobillo_cm": "estado_altura",
+}
+IMU_VALID, IMU_INVALID, IMU_NOT_EVALUABLE = "valida", "no_valida", "no_evaluable"
 SYMMETRY_METRIC = "symmetry_index"
 MTC_NOT_COMPUTABLE = "MTC no calculable: sensor en el tobillo, falta el traslado a la punta"
 
@@ -49,17 +57,26 @@ class ProcessingConfig:
         max_gap_s (float): Hay un hueco cuando pasan más de estos segundos sin
             un valor nuevo, medido por grupo de sensores (IMU y presión). Un
             hueco corta la serie para ese grupo. En la IMU solo se aplica con
-            el pie en movimiento: quieto, el valor repetido es una medida válida.
+            la presión activa: con el pie quieto, el valor repetido es una
+            medida válida.
         reception_window_s (float): Tras un intervalo largo entre filas, tiempo
             adicional en el que se cuentan las muestras que llegan con retraso.
         reception_min_fraction (float): Si en el intervalo más esa ventana
             llega al menos esta fracción de las muestras esperadas, es
             recepción retrasada y no un hueco.
-        imu_moving_gyro (float): Módulo del giroscopio (°/s) por encima del
-            cual se considera que el pie se mueve.
-        imu_max_stale_moving (float): Fracción máxima de filas con la IMU
-            repetida mientras el pie se mueve; por encima, la IMU de la serie
-            no es válida.
+        pressure_active_window_s (float): Ventana, centrada en cada muestra,
+            en la que se mide si la presión está activa. La actividad de la
+            presión es la referencia de movimiento para juzgar la IMU, porque
+            es independiente del giroscopio.
+        pressure_active_min_fraction (float): La presión está activa si en esa
+            ventana algún sensor varía al menos esta fracción de su rango
+            (percentil 95 menos percentil 5)...
+        pressure_active_min_units (float): ...y al menos estas unidades.
+        imu_max_stale_active (float): La IMU de la serie es válida si repite
+            valor en menos de esta fracción de las filas con presión activa.
+        imu_min_active_s (float): Tiempo mínimo de presión activa para poder
+            evaluar la IMU; por debajo queda como no evaluable y sus métricas
+            no se calculan.
         max_interpolation_s (float): Tiempo máximo sin valor nuevo que se
             rellena por interpolación lineal; no puede superar ``max_gap_s``.
         min_coverage (float): Fracción mínima del tiempo fuera de huecos que
@@ -70,18 +87,24 @@ class ProcessingConfig:
             prueba sin mínimo definido no informa métricas de marcha.
         min_strides_minute (int): Mínimo de zancadas válidas en cada minuto
             que se compara en el decaimiento.
-        t25fw_skip_first_strides (int): Zancadas completas de cada pie que se
-            descartan al inicio de cada intento de T25FW (arranque).
+        skip_first_strides (int): Zancadas completas de cada pie que se
+            descartan al inicio de cada ensayo (arranque).
         filter_order (int): Orden del filtro Butterworth.
         pressure_window_s (float): Ventana de suavizado de cada sensor de presión.
         pressure_min_range (float): Rango mínimo (percentil 95 menos percentil
             5 de la lectura suavizada) de un sensor de presión. En el antepié,
             por debajo se trata como plano. En el talón solo decide cuando la
             ventana es demasiado corta para medir el ritmo.
-        heel_min_periodicity (float): Autocorrelación mínima de la presión del
-            talón en el periodo de zancada (``cycle_min_s`` a ``cycle_max_s``)
-            para considerar que tiene modulación de marcha. Es el criterio de
-            calidad principal y no depende de la escala de la lectura.
+        heel_highpass_hz (float): Corte del paso alto que quita la deriva de la
+            presión del talón antes de medir su ritmo.
+        heel_rhythm_window_s (float): Duración de las ventanas en las que se
+            mide el ritmo del talón. Una ventana sin ritmo se excluye; el resto
+            de la serie se sigue usando.
+        heel_min_periodicity (float): Altura mínima del pico (máximo local) de
+            la autocorrelación de la presión del talón dentro del periodo de
+            zancada (``cycle_min_s`` a ``cycle_max_s``) para considerar que
+            una ventana tiene modulación de marcha. Es el criterio de calidad
+            principal y no depende de la escala de la lectura.
         heel_valley_prominence (float): Prominencia mínima, sobre la señal del
             talón normalizada, del valle de mitad de balanceo que debe preceder
             a cada contacto de talón.
@@ -103,11 +126,17 @@ class ProcessingConfig:
             contarlo como giro. Es el criterio que separa los giros reales.
         turn_min_duration_s (float): Duración mínima adicional de un giro; 0 no
             la exige.
+        turn_margin_before_strides (int): Zancadas de cada pie anteriores a un
+            giro que se excluyen (frenada), además del propio giro.
+        turn_margin_after_strides (int): Zancadas de cada pie posteriores a un
+            giro que se excluyen (arranque). Es la versión en zancadas de la
+            exclusión espacial de Müller et al. (2021).
         min_steady_s (float): Marcha estable mínima tras retirar los giros.
         heel_channel (str): Sensor de presión del talón, con el que se detecta
             el contacto de talón (detector principal de zancadas).
-        pressure_stance_is_low (bool): Polaridad: ``True`` si la presión baja
-            cuando el pie carga peso.
+        pressure_stance_is_low (bool): Polaridad: ``True`` si el valor guardado
+            baja cuando el pie carga peso. Lo que se guarda es una tensión que
+            baja con la carga.
         cycle_min_s (float): Tiempo de zancada mínimo; es también la separación
             mínima entre dos contactos de talón.
         cycle_max_s (float): Tiempo de zancada máximo.
@@ -123,8 +152,15 @@ class ProcessingConfig:
         sixmwt_tolerance_s (float): Tolerancia de esa duración.
         sixmwt_min_valid_minutes (int): Minutos con datos válidos necesarios
             para aceptar el 6MWT como completo y calcular el decaimiento.
+        decay_min_minutes (int): Minutos con cadencia (al menos
+            ``min_strides_minute`` zancadas válidas) necesarios para ajustar la
+            pendiente del decaimiento; el primero y el último son obligatorios.
         stride_ok_min_cm (float): Límite inferior de longitud plausible.
         stride_ok_max_cm (float): Límite superior de longitud plausible.
+        t25fw_distance_m (float): Distancia que se recorre en un intento del
+            T25FW (25 pies). Solo sirve para avisar cuando la suma de las
+            longitudes de zancada de un intento no es coherente con ella; no
+            valida ni calibra la longitud.
         mtc_ok_min_cm (float): Límite inferior de la distancia mínima punta-suelo
             (MTC) media de una serie. Reservado: la MTC no se calcula todavía.
         mtc_ok_max_cm (float): Límite superior de la MTC media de una serie.
@@ -138,17 +174,22 @@ class ProcessingConfig:
     max_interpolation_s: float = 0.1
     reception_window_s: float = 0.2
     reception_min_fraction: float = 0.9
-    imu_moving_gyro: float = 100.0
-    imu_max_stale_moving: float = 0.10
+    pressure_active_window_s: float = 1.0
+    pressure_active_min_fraction: float = 0.25
+    pressure_active_min_units: float = 20.0
+    imu_max_stale_active: float = 0.30
+    imu_min_active_s: float = 30.0
     min_coverage: float = 0.8
     min_strides: Dict[str, int] = field(default_factory=lambda: {"6MWT": 30, "2MWT": 10, "T25FW": 4})
     min_strides_minute: int = 20
-    t25fw_skip_first_strides: int = 1
+    skip_first_strides: int = 1
     filter_order: int = 4
     pressure_window_s: float = 0.15
     pressure_min_range: float = 40.0
+    heel_highpass_hz: float = 0.3
+    heel_rhythm_window_s: float = 20.0
     heel_min_periodicity: float = 0.3
-    heel_valley_prominence: float = 0.4
+    heel_valley_prominence: float = 0.3
     rest_gyro_quantile: float = 0.25
     rest_accel_tolerance_g: float = 0.1
     turn_axis: str = "vertical"
@@ -157,6 +198,8 @@ class ProcessingConfig:
     turn_extend_threshold: float = 10.0
     turn_min_angle_deg: float = 90.0
     turn_min_duration_s: float = 0.0
+    turn_margin_before_strides: int = 3
+    turn_margin_after_strides: int = 2
     min_steady_s: float = 3.0
     heel_channel: str = "S2"
     pressure_stance_is_low: bool = True
@@ -172,8 +215,10 @@ class ProcessingConfig:
     sixmwt_duration_s: float = 360.0
     sixmwt_tolerance_s: float = 5.0
     sixmwt_min_valid_minutes: int = 5
+    decay_min_minutes: int = 4
     stride_ok_min_cm: float = 30.0
     stride_ok_max_cm: float = 150.0
+    t25fw_distance_m: float = 7.62
     mtc_ok_min_cm: float = 0.4
     mtc_ok_max_cm: float = 5.5
     mtc_stride_max_cm: float = 6.0
@@ -189,7 +234,8 @@ class ProcessingConfig:
             value = getattr(self, item.name)
             if item.name in ("turn_axis", "heel_channel", "pressure_stance_is_low", "time_grid", "min_strides"):
                 continue
-            if item.name == "turn_min_duration_s" and value == 0 and not isinstance(value, bool):
+            zero_allowed = ("turn_min_duration_s", "turn_margin_before_strides", "turn_margin_after_strides", "skip_first_strides")
+            if item.name in zero_allowed and value == 0 and not isinstance(value, bool):
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not np.isfinite(value) or value <= 0:
                 raise ConfigError(_("processing.{0} debe ser un número finito mayor que cero.").format(item.name))
@@ -198,7 +244,8 @@ class ProcessingConfig:
             for test, value in self.min_strides.items()
         ):
             raise ConfigError(_("processing.min_strides debe asignar a cada prueba un entero mayor que cero."))
-        for name in ("filter_order", "sixmwt_min_valid_minutes", "min_strides_minute", "t25fw_skip_first_strides"):
+        for name in ("filter_order", "sixmwt_min_valid_minutes", "min_strides_minute", "skip_first_strides",
+                     "turn_margin_before_strides", "turn_margin_after_strides", "decay_min_minutes"):
             if not isinstance(getattr(self, name), int):
                 raise ConfigError(_("processing.{0} debe ser un entero.").format(name))
         if not isinstance(self.pressure_stance_is_low, bool):
@@ -213,12 +260,12 @@ class ProcessingConfig:
             raise ConfigError(_("processing.max_gap_s debe ser mayor que el intervalo nominal entre muestras."))
         if self.max_interpolation_s > self.max_gap_s:
             raise ConfigError(_("processing.max_interpolation_s no puede ser mayor que processing.max_gap_s."))
-        for name in ("min_coverage", "rest_gyro_quantile", "reception_min_fraction", "imu_max_stale_moving",
-                     "heel_min_periodicity", "heel_valley_prominence"):
+        for name in ("min_coverage", "rest_gyro_quantile", "reception_min_fraction", "imu_max_stale_active",
+                     "pressure_active_min_fraction", "heel_min_periodicity", "heel_valley_prominence"):
             if getattr(self, name) > 1:
                 raise ConfigError(_("processing.{0} debe estar entre 0 y 1.").format(name))
         nyquist = self.fs / 2
-        for name in ("turn_smooth_cutoff_hz",):
+        for name in ("turn_smooth_cutoff_hz", "heel_highpass_hz"):
             if getattr(self, name) >= nyquist:
                 raise ConfigError(_("processing.{0} debe ser menor que la frecuencia de Nyquist ({1} Hz).").format(name, nyquist))
         for low, high in (
@@ -236,6 +283,10 @@ class ProcessingConfig:
             raise ConfigError(_("processing.sixmwt_duration_s debe ser al menos el doble de processing.decay_block_s."))
         if self.sixmwt_min_valid_minutes > round(self.sixmwt_duration_s / self.decay_block_s):
             raise ConfigError(_("processing.sixmwt_min_valid_minutes no puede superar el número de bloques del ensayo."))
+        if self.heel_rhythm_window_s < 2 * self.cycle_max_s:
+            raise ConfigError(_("processing.heel_rhythm_window_s debe ser al menos el doble de processing.cycle_max_s."))
+        if not 2 <= self.decay_min_minutes <= round(self.sixmwt_duration_s / self.decay_block_s):
+            raise ConfigError(_("processing.decay_min_minutes debe estar entre 2 y el número de bloques del ensayo."))
 
     @classmethod
     def from_mapping(cls, section: Mapping[str, Any] | None) -> "ProcessingConfig":
@@ -357,6 +408,105 @@ class GaitMetricsCalculator:
             smooth = pd.Series(values).rolling(window=window, center=True, min_periods=1).mean().to_numpy()
             return smooth, "media_movil"
         return filtfilt(b, a, values), "butterworth"
+
+    def _highpass(self, values: np.ndarray, cutoff: float, fs: float) -> np.ndarray:
+        """Quita la deriva de un tramo continuo con un paso alto de fase cero.
+
+        Args:
+            values (np.ndarray): Muestras de un tramo continuo y sin valores ausentes.
+            cutoff (float): Frecuencia de corte en Hz.
+            fs (float): Frecuencia efectiva en Hz.
+
+        Returns:
+            np.ndarray: Señal sin deriva; si el tramo es demasiado corto para el
+            filtro, la señal menos su media.
+        """
+        b, a = butter(self.config.filter_order, cutoff / (0.5 * fs), btype="high", analog=False)
+        if len(values) <= 3 * max(len(a), len(b)):
+            return values - values.mean()
+        return filtfilt(b, a, values)
+
+    def _rhythm(self, values: np.ndarray, fs: float) -> float:
+        """Mide el ritmo de marcha de un tramo de la presión del talón.
+
+        Quita la deriva con un paso alto (``heel_highpass_hz``) y busca en la
+        autocorrelación un pico (máximo local) con retardo dentro del periodo
+        de zancada. No basta el valor más alto del intervalo: sin pico no hay
+        ritmo.
+
+        Args:
+            values (np.ndarray): Presión del talón suavizada, tramo continuo.
+            fs (float): Frecuencia efectiva en Hz.
+
+        Returns:
+            float: Altura del pico de autocorrelación (0 si no hay ninguno).
+        """
+        cfg = self.config
+        centred = self._highpass(values, cfg.heel_highpass_hz, fs)
+        centred = centred - centred.mean()
+        spectrum = np.fft.rfft(centred, n=2 * len(centred))
+        correlation = np.fft.irfft(spectrum * np.conj(spectrum))[:len(centred)]
+        if correlation[0] <= 0:
+            return 0.0
+        first = self.seconds_to_samples(cfg.cycle_min_s, fs)
+        last = min(self.seconds_to_samples(cfg.cycle_max_s, fs), len(centred) - 2)
+        normalised = correlation / correlation[0]
+        peaks = find_peaks(normalised[first - 1:last + 2])[0] + first - 1
+        return float(normalised[peaks].max()) if len(peaks) else 0.0
+
+    def _pressure_active(self, data: pd.DataFrame, fs: float) -> np.ndarray:
+        """Marca las muestras en las que la presión está activa (el pie se mueve).
+
+        La presión está activa si, en una ventana de ``pressure_active_window_s``
+        centrada en la muestra, algún sensor varía al menos
+        ``pressure_active_min_fraction`` de su rango (percentil 95 menos
+        percentil 5) y al menos ``pressure_active_min_units`` unidades. Es la
+        referencia de movimiento para juzgar la IMU: no depende del giroscopio.
+
+        Args:
+            data (pd.DataFrame): Canales de presión ya tratados.
+            fs (float): Frecuencia efectiva en Hz.
+
+        Returns:
+            np.ndarray: Máscara booleana por muestra.
+        """
+        cfg = self.config
+        active = np.zeros(len(data), dtype=bool)
+        window = self.seconds_to_samples(cfg.pressure_active_window_s, fs)
+        for channel in PRESSURE_CHANNELS:
+            if channel not in data.columns:
+                continue
+            values = data[channel]
+            valid = values.dropna()
+            if valid.empty:
+                continue
+            spread = float(np.percentile(valid, 95) - np.percentile(valid, 5))
+            needed = max(cfg.pressure_active_min_fraction * spread, cfg.pressure_active_min_units)
+            rolling = values.rolling(window=window, center=True, min_periods=1)
+            active |= (rolling.max() - rolling.min()).ge(needed).fillna(False).to_numpy()
+        return active
+
+    def _turn_margin(self, prepared: PreparedSignal, starts: list[int], stops: list[int]) -> np.ndarray:
+        """Marca las zancadas próximas a un giro (frenada antes, arranque después).
+
+        Args:
+            prepared (PreparedSignal): Serie con los giros ya detectados.
+            starts (list[int]): Índice de inicio de cada zancada, en orden.
+            stops (list[int]): Índice de fin de cada zancada.
+
+        Returns:
+            np.ndarray: ``True`` en las ``turn_margin_before_strides`` zancadas
+            anteriores y las ``turn_margin_after_strides`` posteriores a cada giro.
+        """
+        cfg = self.config
+        first, last = np.asarray(starts, dtype=int), np.asarray(stops, dtype=int)
+        near = np.zeros(len(first), dtype=bool)
+        for turn_start, turn_stop in prepared.cache.get("giros_idx", []):
+            before = np.flatnonzero(last <= turn_start)
+            if cfg.turn_margin_before_strides:
+                near[before[-cfg.turn_margin_before_strides:]] = True
+            near[np.flatnonzero(first >= turn_stop - 1)[:cfg.turn_margin_after_strides]] = True
+        return near
 
     def _valid_runs(self, prepared: PreparedSignal, channels: tuple[str, ...], extra: np.ndarray | None = None) -> list[tuple[int, int]]:
         """Devuelve los tramos continuos en tiempo con todos los canales válidos.
@@ -567,10 +717,13 @@ class GaitMetricsCalculator:
         Antes de cortar se separa la recepción retrasada de los huecos reales
         (:meth:`_real_gaps`). Los huecos se miden por grupo de sensores sobre
         los valores nuevos (:meth:`_fill_group`): en la presión siempre, y en
-        la IMU solo con el pie en movimiento, porque quieto el valor repetido
-        es una medida válida. La IMU de la serie es válida si, mientras el pie
-        se mueve, repite valor en menos de ``imu_max_stale_moving`` de las
-        filas. Nada se sustituye por cero.
+        la IMU solo con la presión activa (:meth:`_pressure_active`), porque con
+        el pie quieto el valor repetido es una medida válida. La IMU de la serie
+        es válida si, con la presión activa, repite valor en menos de
+        ``imu_max_stale_active`` de las filas; si no hay al menos
+        ``imu_min_active_s`` de presión activa no se puede evaluar. Con
+        ``time_grid: uniform`` se conservan las filas que repiten marca de
+        tiempo (dos muestras reales recibidas juntas). Nada se sustituye por cero.
         Por último estima la gravedad en reposo y añade la aceleración vertical
         ``Av`` y la velocidad de giro en torno a la vertical ``Wv``; si no hay
         reposo utilizable se usan ``Ay`` y ``Gy``.
@@ -597,7 +750,9 @@ class GaitMetricsCalculator:
             order = np.argsort(time.to_numpy(), kind="stable")
             frame, time = frame.iloc[order], time.iloc[order]
         repeated = time.duplicated().to_numpy()
-        frame, time = frame.loc[~repeated], time[~repeated]
+        if cfg.time_grid != "uniform":
+            # Sin rejilla uniforme el tiempo debe ser estrictamente creciente.
+            frame, time = frame.loc[~repeated], time[~repeated]
         if len(time) < 3:
             return PreparedSignal(error="ERR_TOO_FEW_SAMPLES")
 
@@ -651,30 +806,20 @@ class GaitMetricsCalculator:
                 data[channel] = values[:, position]
                 coverage[channel] = coverage["presion"]
 
-        # --- IMU: el pie se mueve si gira deprisa o si la presión cambia de estado cerca ---
-        stale_moving, imu_valid = float("nan"), False
+        # --- IMU: se juzga con la presión, que es independiente del giroscopio ---
+        stale_active, imu_state, active_s = float("nan"), IMU_NOT_EVALUABLE, 0.0
         present = [channel for channel in IMU_CHANNELS if channel in numeric]
         if present:
             raw = np.column_stack([numeric[c] for c in present])
-            moving = np.zeros(len(t), dtype=bool)
-            if all(channel in numeric for channel in ("Gx", "Gy", "Gz")):
-                gyro_norm = np.linalg.norm(np.column_stack([numeric[c] for c in ("Gx", "Gy", "Gz")]), axis=1)
-                fast = np.nan_to_num(gyro_norm, nan=0.0) > cfg.imu_moving_gyro
-                # Muestras vecinas: una fila repetida entre dos giros rápidos también es movimiento.
-                moving |= fast | np.concatenate(([False], fast[:-1])) | np.concatenate((fast[1:], [False]))
-            if len(coverage) and all(channel in data.columns for channel in PRESSURE_CHANNELS):
-                states, _status, reason = self._contact(partial)
-                if not reason:
-                    change = np.zeros(len(t), dtype=bool)
-                    change[1:] = np.nan_to_num(np.diff(states["suelo"]), nan=0.0) != 0
-                    reach = self.seconds_to_samples(cfg.max_gap_s, fs)
-                    moving |= pd.Series(change).rolling(2 * reach + 1, center=True, min_periods=1).max().to_numpy().astype(bool)
-            values, filled, n_gaps, held = self._fill_group(raw, t, segment, still=~moving)
+            active = self._pressure_active(data, fs)
+            active_s = float(active.sum() * dt)
+            values, filled, n_gaps, held = self._fill_group(raw, t, segment, still=~active)
             interpolated += filled
             group_gaps["imu"] = n_gaps
             coverage["imu"] = round(float(1 - np.isnan(values).any(axis=1).mean()), 4)
-            stale_moving = float((held & moving).sum() / moving.sum()) if moving.any() else 0.0
-            imu_valid = stale_moving <= cfg.imu_max_stale_moving
+            stale_active = float((held & active).sum() / active.sum()) if active.any() else float("nan")
+            if active_s >= cfg.imu_min_active_s:
+                imu_state = IMU_VALID if stale_active < cfg.imu_max_stale_active else IMU_INVALID
             for position, channel in enumerate(present):
                 data[channel] = values[:, position]
                 coverage[channel] = coverage["imu"]
@@ -690,8 +835,9 @@ class GaitMetricsCalculator:
         report = {
             "muestras": len(t), "fs_efectiva": round(fs, 3), "duracion_real_seg": round(duration, 3),
             "n_huecos": int(gaps.sum()), "tiempo_huecos_seg": round(gap_time, 3), "n_segmentos": n_segments,
-            "intervalos_recuperados": recovered, "imu_valida": bool(imu_valid),
-            "imu_repeticion_en_movimiento_prc": round(100 * stale_moving, 1),
+            "intervalos_recuperados": recovered, "imu_valida": imu_state == IMU_VALID, "imu_estado": imu_state,
+            "presion_activa_seg": round(active_s, 1),
+            "imu_repeticion_presion_activa_prc": round(100 * stale_active, 1),
             "exposicion_seg": round(duration - gap_time, 3), "cobertura": coverage, "huecos_por_grupo": group_gaps,
             "muestras_interpoladas": interpolated, "tiempos_invalidos": invalid_times,
             "tiempos_repetidos": int(repeated.sum()), "reordenada": bool(reordered),
@@ -704,8 +850,8 @@ class GaitMetricsCalculator:
         logger.debug(_("DEBUG_SIGNAL_GROUPS: cobertura IMU {0:.0%} ({1} huecos), cobertura presión {2:.0%} ({3} huecos), inclinación respecto a Ay {4:.0f} grados (vertical estimada: {5})").format(
             coverage.get("imu", float("nan")), group_gaps.get("imu", 0), coverage.get("presion", float("nan")),
             group_gaps.get("presion", 0), tilt, direction is not None))
-        logger.debug(_("DEBUG_SIGNAL_QUALITY: IMU repetida en movimiento {0:.1f} % (válida: {1}); {2} intervalos largos recuperados como recepción retrasada").format(
-            100 * stale_moving, imu_valid, recovered))
+        logger.debug(_("DEBUG_SIGNAL_QUALITY: IMU repetida con presión activa {0:.1f} % en {1:.0f} s (estado: {2}); {3} intervalos largos recuperados como recepción retrasada").format(
+            100 * stale_active, active_s, imu_state, recovered))
         prepared = PreparedSignal(t=t, data=data, segment=segment, dt=dt, fs=fs, report=report)
         if cfg.turn_smooth_cutoff_hz >= fs / 2:
             prepared.error = "ERR_CUTOFF_ABOVE_NYQUIST"
@@ -722,7 +868,9 @@ class GaitMetricsCalculator:
             return f"ERR_MISSING_{','.join(missing).upper()}"
         inertial = [c for c in channels if c in IMU_CHANNELS or c in (VERTICAL_ACCEL, VERTICAL_RATE)]
         if inertial and not prepared.report.get("imu_valida", False):
-            # La IMU repite demasiados valores mientras el pie se mueve.
+            if prepared.report.get("imu_estado") == IMU_NOT_EVALUABLE:
+                return "ERR_IMU_NOT_EVALUABLE: presión activa insuficiente para evaluar la IMU"
+            # La IMU repite demasiados valores mientras la presión está activa.
             return "ERR_IMU_STALE"
         low = [c for c in channels if c not in inertial and prepared.report["cobertura"][c] < self.config.min_coverage]
         if low:
@@ -747,6 +895,7 @@ class GaitMetricsCalculator:
         """
         cfg = self.config
         turning = np.zeros(len(prepared.t), dtype=bool)
+        prepared.cache["giros"], prepared.cache["giros_idx"] = [], []
         summary = {"tiempo_giros_seg": 0.0, "n_giros": 0, "n_giros_descartados": 0, "angulo_giros_grados": 0.0,
                    "giros_evaluados": False}
         channel = VERTICAL_RATE if cfg.turn_axis == "vertical" else cfg.turn_axis
@@ -757,6 +906,7 @@ class GaitMetricsCalculator:
         core = speed > cfg.turn_threshold
         angle_total, kept, candidates = 0.0, 0, 0
         episodes: list[Dict[str, float]] = []
+        spans: list[tuple[int, int]] = []
         for start, stop in self._valid_runs(prepared, (channel,), speed > cfg.turn_extend_threshold):
             if not core[start:stop].any():
                 continue
@@ -770,15 +920,15 @@ class GaitMetricsCalculator:
                 turning[first:last] = True
                 angle_total += angle
                 kept += 1
+                spans.append((first, last))
                 episodes.append({"inicio_s": round(float(prepared.t[first]), 3), "fin_s": round(float(prepared.t[last - 1]), 3),
                                  "angulo_grados": round(angle, 1)})
-        prepared.cache["giros"] = episodes
+        prepared.cache["giros"], prepared.cache["giros_idx"] = episodes, spans
         summary = {
             "tiempo_giros_seg": round(self._exposure(prepared, _true_runs(turning)), 2), "n_giros": kept,
             "n_giros_descartados": candidates - kept, "angulo_giros_grados": round(angle_total, 1),
             "giros_evaluados": True,
         }
-        return turning, summary, methods
         return turning, summary, methods
 
     def _contact(self, prepared: PreparedSignal) -> tuple[Dict[str, np.ndarray], str, str]:
@@ -791,16 +941,21 @@ class GaitMetricsCalculator:
         y no aporta información (hay pacientes que no cargan bien la punta).
 
         La calidad del talón se mide antes de detectar nada y no depende de la
-        escala: debe tener modulación de marcha, es decir, una autocorrelación
-        de al menos ``heel_min_periodicity`` en el periodo de zancada. Si el
-        tramo continuo más largo dura menos de dos zancadas máximas no puede
-        medirse el ritmo, y entonces se exige el rango mínimo. El resultado y
-        el motivo de cada descarte quedan en el informe de la serie.
+        escala: debe tener modulación de marcha (:meth:`_rhythm`). Se mide por
+        ventanas de ``heel_rhythm_window_s`` dentro de cada tramo continuo: en
+        una serie de varios minutos el ritmo cambia y hay giros y paradas, así
+        que la serie entera lo subestima. Las ventanas con un pico de al menos
+        ``heel_min_periodicity`` se usan; las demás se excluyen (``ritmo``). Si
+        ninguna lo tiene, la presión no tiene modulación de marcha. Si ningún
+        tramo dura dos zancadas máximas no puede medirse el ritmo, y entonces
+        se exige el rango mínimo. El resultado y el motivo de cada descarte
+        quedan en el informe de la serie.
 
         Returns:
             tuple[Dict[str, np.ndarray], str, str]: Por sensor y en ``suelo``,
             vector con 1 (cargado), 0 (descargado) o ``NaN``; en ``talon_norm``,
-            la carga del talón normalizada entre 0 y 1; estado y motivo si la
+            la carga del talón normalizada entre 0 y 1; en ``ritmo``, las
+            muestras de ventanas con ritmo de marcha; estado y motivo si la
             presión no es utilizable.
         """
         if "contacto" in prepared.cache:
@@ -828,26 +983,31 @@ class GaitMetricsCalculator:
             high, low = np.percentile(valid, 95), np.percentile(valid, 5)
             spread = float(high - low)
             if channel == cfg.heel_channel:
-                # Ritmo de marcha del talón, medido en el tramo continuo más largo.
-                longest = max(runs, key=lambda run: run[1] - run[0])
-                span = (longest[1] - longest[0]) * prepared.dt
-                periodicity = float("nan")
-                if span >= 2 * cfg.cycle_max_s and spread > 0:
-                    centred = smooth[longest[0]:longest[1]] - smooth[longest[0]:longest[1]].mean()
-                    spectrum = np.fft.rfft(centred, n=2 * len(centred))
-                    correlation = np.fft.irfft(spectrum * np.conj(spectrum))[:len(centred)]
-                    if correlation[0] > 0:
-                        first = self.seconds_to_samples(cfg.cycle_min_s, prepared.fs)
-                        last = min(self.seconds_to_samples(cfg.cycle_max_s, prepared.fs), len(centred) - 1)
-                        periodicity = float((correlation[first:last + 1] / correlation[0]).max())
-                criterion = "periodicidad" if np.isfinite(periodicity) else "rango"
+                # Ritmo de marcha del talón, medido por ventanas dentro de cada tramo continuo.
+                rhythm = np.zeros(len(raw), dtype=bool)
+                scores: list[float] = []
+                shortest = self.seconds_to_samples(2 * cfg.cycle_max_s, prepared.fs)
+                size = max(self.seconds_to_samples(cfg.heel_rhythm_window_s, prepared.fs), shortest)
+                for start, stop in runs:
+                    edges = list(range(start, stop, size))
+                    if len(edges) > 1 and stop - edges[-1] < shortest:
+                        edges.pop()  # un resto demasiado corto se une a la ventana anterior
+                    for first, last in zip(edges, [*edges[1:], stop]):
+                        if last - first >= shortest:
+                            scores.append(self._rhythm(smooth[first:last], prepared.fs) if spread > 0 else 0.0)
+                            rhythm[first:last] = scores[-1] >= cfg.heel_min_periodicity
+                criterion = "periodicidad" if scores else "rango"
+                periodicity = float(np.median(scores)) if scores else float("nan")
+                share = 100.0 * float(np.mean(np.array(scores) >= cfg.heel_min_periodicity)) if scores else float("nan")
+                if criterion == "rango":
+                    rhythm[:] = True
                 prepared.report.update({
                     "rango_talon": round(spread, 2), "periodicidad_talon": round(periodicity, 3),
-                    "criterio_presion": criterion,
+                    "criterio_presion": criterion, "ventanas_ritmo": len(scores), "ventanas_con_ritmo_prc": round(share, 1),
                 })
                 if spread <= 0:
                     failure = "ERR_FLAT_PRESSURE: presión del talón sin variación"
-                elif criterion == "periodicidad" and periodicity < cfg.heel_min_periodicity:
+                elif criterion == "periodicidad" and not rhythm.any():
                     failure = "ERR_NO_GAIT_MODULATION: presión sin modulación de marcha"
                 elif criterion == "rango" and spread < cfg.pressure_min_range:
                     failure = (f"ERR_SHORT_WINDOW: ventana demasiado corta para medir el ritmo y rango de presión "
@@ -856,6 +1016,7 @@ class GaitMetricsCalculator:
                     break
                 norm = np.clip((smooth - low) / spread, 0.0, 1.0)
                 states["talon_norm"] = 1.0 - norm if cfg.pressure_stance_is_low else norm
+                states["ritmo"] = rhythm
             elif spread < cfg.pressure_min_range:
                 continue  # sensor del antepié plano
             threshold = (high + low) / 2
@@ -881,16 +1042,20 @@ class GaitMetricsCalculator:
         el primer instante tras cada valle en el que el talón pasa a estar
         cargado. Así el ruido alrededor del umbral no genera contactos. Una
         zancada va de un contacto al siguiente del mismo tramo y es válida si
-        su duración está entre ``cycle_min_s`` y ``cycle_max_s``.
+        su duración está entre ``cycle_min_s`` y ``cycle_max_s`` y no está en el
+        margen de un giro (:meth:`_turn_margin`): cerca de los giros el paciente
+        frena y arranca, y el tiempo de zancada no es el de la marcha estable.
 
         Returns:
             Dict[str, Any]: ``contactos`` (índices), ``zancadas`` (lista de
-            ``(inicio, fin, duración, válida)``), ``tramos`` (número de tramos
+            ``(inicio, fin, duración, válida)``), ``motivos`` (causa de exclusión
+            de cada zancada, vacía si es válida), ``tramos`` (número de tramos
             continuos analizados) y ``exposicion`` (segundos analizados).
         """
         cfg = self.config
         heel, load = states[cfg.heel_channel], states["talon_norm"]
-        runs = self._valid_runs(prepared, PRESSURE_CHANNELS, steady)
+        # Solo se detecta en marcha estable (sin giros) y en ventanas con ritmo de marcha.
+        runs = self._valid_runs(prepared, PRESSURE_CHANNELS, steady & states["ritmo"])
         distance = self.seconds_to_samples(cfg.cycle_min_s, prepared.fs)
         contacts: list[int] = []
         strides: list[tuple[int, int, float, bool]] = []
@@ -911,7 +1076,14 @@ class GaitMetricsCalculator:
                 duration = float(prepared.t[second] - prepared.t[first])
                 ok = cfg.cycle_min_s - prepared.dt / 2 <= duration <= cfg.cycle_max_s + prepared.dt / 2
                 strides.append((first, second, duration, ok))
-        return {"contactos": contacts, "zancadas": strides, "tramos": len(runs), "exposicion": self._exposure(prepared, runs)}
+        near = self._turn_margin(prepared, [stride[0] for stride in strides], [stride[1] for stride in strides])
+        reasons = ["" if ok else "duracion_fuera_de_banda" for _first, _second, _duration, ok in strides]
+        for position in np.flatnonzero(near):
+            first, second, duration, ok = strides[position]
+            if ok:
+                strides[position], reasons[position] = (first, second, duration, False), "margen_giro"
+        return {"contactos": contacts, "zancadas": strides, "motivos": reasons, "tramos": len(runs),
+                "exposicion": self._exposure(prepared, runs)}
 
     # ------------------------------------------------------------------ métricas
 
@@ -948,6 +1120,14 @@ class GaitMetricsCalculator:
                   duración dentro de la banda válida.
                 - 'n_tramos' (int): Tramos continuos de marcha analizados.
                 - 'tiempo_giros_seg', 'n_giros', 'angulo_giros_grados': Giros.
+                - 'giros_evaluados' (bool): Si pudieron localizarse los giros
+                  (IMU válida). Si no, la exclusión de giros y de sus márgenes
+                  no se aplicó y la cadencia incluye frenadas y arranques.
+                - 'zancadas_margen_giro' (int): Zancadas excluidas por estar
+                  junto a un giro.
+                - 'contactos_s', 'despegues_s' (list[float]): Instantes detectados.
+                - 'tramos_excluidos' (list[dict]): Tramos que no entran en el
+                  cálculo, con su motivo.
                 - 'tiempo_analizado_seg' (float): Marcha estable analizada.
                 - 'modalidad' (str): Señal usada por el detector.
                 - 'fs_efectiva', 'duracion_real_seg', 'n_huecos': Calidad temporal.
@@ -968,16 +1148,37 @@ class GaitMetricsCalculator:
 
         turning, turns, _methods = self._turns(prepared, excluir_giros)
         found = self._strides(prepared, states, ~turning)
-        valid = [duration for _first, _second, duration, ok in found["zancadas"] if ok][max(0, int(skip_first)):]
+        reasons = list(found["motivos"])
+        usable = [position for position, stride in enumerate(found["zancadas"]) if stride[3]]
+        for position in usable[:max(0, int(skip_first))]:
+            reasons[position] = "arranque"
+        valid = [found["zancadas"][position][2] for position in usable[max(0, int(skip_first)):]]
         analysed = found["exposicion"]
-        in_band = 100.0 * len(valid) / len(found["zancadas"]) if found["zancadas"] else float("nan")
+        in_band = [reason != "duracion_fuera_de_banda" for reason in reasons]
+        in_band = 100.0 * sum(in_band) / len(in_band) if in_band else float("nan")
+        moment = lambda index: round(float(prepared.t[index]), 3)  # noqa: E731
+        ground = states["suelo"]
+        lifts = np.flatnonzero((ground[:-1] == 1) & (ground[1:] == 0) & ~turning[1:]
+                               & (prepared.segment[:-1] == prepared.segment[1:])) + 1
+        gaps = _true_runs(prepared.data[list(PRESSURE_CHANNELS)].isna().any(axis=1).to_numpy())
+        excluded = [{"inicio_s": moment(a), "fin_s": moment(b - 1), "motivo": "hueco_presion"} for a, b in gaps]
+        excluded += [{"inicio_s": turn["inicio_s"], "fin_s": turn["fin_s"], "motivo": "giro"} for turn in prepared.cache.get("giros", [])]
+        present = prepared.data[list(PRESSURE_CHANNELS)].notna().all(axis=1).to_numpy()
+        excluded += [{"inicio_s": moment(a), "fin_s": moment(b - 1), "motivo": "sin_ritmo"} for a, b in _true_runs(present & ~states["ritmo"])]
+        excluded += [
+            {"inicio_s": moment(stride[0]), "fin_s": moment(stride[1]), "motivo": reason}
+            for stride, reason in zip(found["zancadas"], reasons) if reason
+        ]
         common = {
             **turns, "tiempo_analizado_seg": round(analysed, 2), "modalidad": cfg.heel_channel,
             "contactos_talon": len(found["contactos"]), "n_tramos": found["tramos"],
             "zancadas_en_banda_prc": round(in_band, 1), "metodo_filtro": "media_movil",
+            "zancadas_margen_giro": reasons.count("margen_giro"),
             "exposicion_seg": prepared.report["exposicion_seg"], "tiempos_zancada": [round(value, 4) for value in valid],
-            "min_zancadas": minimum, "contactos_s": [round(float(prepared.t[index]), 3) for index in found["contactos"]],
+            "min_zancadas": minimum, "contactos_s": [moment(index) for index in found["contactos"]],
+            "despegues_s": [moment(index) for index in lifts],
             "giros": prepared.cache.get("giros", []),
+            "tramos_excluidos": sorted(excluded, key=lambda item: item["inicio_s"]),
         }
         if turns["tiempo_giros_seg"] > 0 and analysed < cfg.min_steady_s:
             logger.debug(_("DEBUG_NO_STEADY_GAIT: {0:.2f} s de marcha estable tras {1} s de giros (mínimo {2} s); cadencia no calculada").format(analysed, turns['tiempo_giros_seg'], cfg.min_steady_s))
@@ -1066,20 +1267,23 @@ class GaitMetricsCalculator:
         }
 
     def calcular_decaimiento_6mwt(
-        self, df: pd.DataFrame, duracion_registro_s: float | None = None, inicio: Any = None
+        self, df: pd.DataFrame, duracion_registro_s: float | None = None, inicio: Any = None, skip_first: int = 0
     ) -> Dict[str, Any]:
-        """Calcula el índice de fatiga o decaimiento de la cadencia a lo largo del test 6MWT.
+        """Calcula el decaimiento de la cadencia a lo largo del 6MWT como pendiente minuto a minuto.
 
         El ensayo se divide en minutos (bloques de ``decay_block_s``) contados
         desde el inicio de la ventana del registro. Un minuto es válido si
         tiene datos de presión utilizables durante al menos ``min_coverage`` de
         su duración. El 6MWT es completo si la ventana del registro dura
         ``sixmwt_duration_s`` ± ``sixmwt_tolerance_s`` y hay al menos
-        ``sixmwt_min_valid_minutes`` minutos válidos. El decaimiento compara la
-        cadencia del primer minuto con la del último y solo se calcula si el
-        ensayo es completo, ambos están entre los válidos y cada uno tiene al
-        menos ``min_strides_minute`` zancadas válidas; en otro caso queda vacío
-        con su motivo.
+        ``sixmwt_min_valid_minutes`` minutos válidos.
+
+        Como en Müller et al. (BMC Neurol. 2021;21:337), el decaimiento es la
+        pendiente de la recta ajustada a la cadencia de cada minuto. Un minuto
+        aporta cadencia si tiene al menos ``min_strides_minute`` zancadas
+        válidas (fuera de giros y de sus márgenes). Hacen falta al menos
+        ``decay_min_minutes`` minutos con cadencia, y entre ellos el primero y
+        el último; en otro caso queda vacío con su motivo.
 
         Args:
             df (pd.DataFrame): Datos del test de marcha de 6 minutos con ``_time``.
@@ -1087,18 +1291,23 @@ class GaitMetricsCalculator:
                 registro; ``None`` usa la duración de la serie.
             inicio (Any): Inicio de la ventana del registro, en el mismo reloj
                 que ``_time``; ``None`` usa la primera muestra.
+            skip_first (int): Zancadas válidas iniciales que se descartan (arranque).
 
         Returns:
             Dict[str, Any]: Fatiga cuantificada:
-                - '6mwt_decaimiento' (float): Porcentaje de pérdida de cadencia.
-                - 'cadencia_inicial', 'cadencia_final' (float): Cadencia del
-                  primer y del último minuto.
+                - 'pendiente_cadencia' (float): Pendiente de la recta, en
+                  zancadas por minuto ganadas o perdidas cada minuto.
+                - '6mwt_decaimiento' (float): Pérdida de cadencia entre el
+                  primer y el último minuto según la recta, en porcentaje.
+                - 'cadencia_inicial', 'cadencia_final' (float): Cadencia medida
+                  en el primer y en el último minuto.
                 - 'minutos_validos' (int): Minutos con datos válidos.
+                - 'minutos_con_cadencia' (int): Minutos que entran en el ajuste.
                 - 'ensayo_completo' (bool): Si se acepta como 6MWT completo.
                 - 'status' (str) y 'error_reason' (str).
         """
         cfg = self.config
-        keys = ("6mwt_decaimiento",)
+        keys = ("6mwt_decaimiento", "pendiente_cadencia")
         prepared = self.preparar(df)
         if prepared.error:
             return self._failure(keys, "WARNING", prepared.error, prepared, minutos_validos=0, ensayo_completo=False)
@@ -1139,17 +1348,30 @@ class GaitMetricsCalculator:
             return self._failure(keys, status, reason, prepared, **extra)
         turning, _turns, _methods = self._turns(prepared, True)
         found = self._strides(prepared, states, ~turning)
-        cadences = {}
-        for name, block in (("inicial", 0), ("final", n_blocks - 1)):
-            durations = [duration for first, _second, duration, ok in found["zancadas"] if ok and block_of[first] == block]
-            if len(durations) < cfg.min_strides_minute:
-                return self._failure(keys, "WARNING", f"ERR_6MWT_SIN_CADENCIA: sin zancadas válidas suficientes en el minuto {name}", prepared, **extra)
-            cadences[name] = 60.0 / float(np.mean(durations))
+        strides = [(first, duration) for first, _second, duration, ok in found["zancadas"] if ok][max(0, int(skip_first)):]
+        per_minute: Dict[int, float] = {}
+        for block in valid_blocks:
+            durations = [duration for first, duration in strides if block_of[first] == block]
+            if len(durations) >= cfg.min_strides_minute:
+                per_minute[block] = 60.0 / float(np.mean(durations))
+        extra["minutos_con_cadencia"] = len(per_minute)
+        extra["cadencias_minuto"] = {block + 1: round(value, 2) for block, value in sorted(per_minute.items())}
+        missing = [name for name, block in (("inicial", 0), ("final", n_blocks - 1)) if block not in per_minute]
+        if missing:
+            reason = f"ERR_6MWT_SIN_CADENCIA: sin zancadas válidas suficientes en el minuto {' y '.join(missing)}"
+            return self._failure(keys, "WARNING", reason, prepared, **extra)
+        if len(per_minute) < cfg.decay_min_minutes:
+            reason = (f"ERR_6MWT_POCOS_MINUTOS: {len(per_minute)} minutos con cadencia "
+                      f"(mínimo {cfg.decay_min_minutes}, con el primero y el último)")
+            return self._failure(keys, "WARNING", reason, prepared, **extra)
 
-        decay = (cadences["inicial"] - cadences["final"]) / cadences["inicial"] * 100
+        minutes = np.array(sorted(per_minute), dtype=float) + 1
+        slope, intercept = np.polyfit(minutes, [per_minute[int(minute) - 1] for minute in minutes], 1)
+        fitted_first, fitted_last = intercept + slope, intercept + slope * n_blocks
+        decay = (fitted_first - fitted_last) / fitted_first * 100
         return {
-            "6mwt_decaimiento": round(decay, 2), "cadencia_inicial": round(cadences["inicial"], 2),
-            "cadencia_final": round(cadences["final"], 2), **extra,
+            "6mwt_decaimiento": round(float(decay), 2), "pendiente_cadencia": round(float(slope), 3),
+            "cadencia_inicial": round(per_minute[0], 2), "cadencia_final": round(per_minute[n_blocks - 1], 2), **extra,
             **self._quality(prepared), "status": "OK", "error_reason": "",
         }
 
@@ -1210,7 +1432,8 @@ class GaitMetricsCalculator:
         Cada zancada va del instante de menor giro de un apoyo (pie plano y
         quieto) al del apoyo siguiente. Solo se integran zancadas con la IMU y
         la presión válidas de principio a fin, fuera de giros y con duración
-        dentro de la banda de zancada. El módulo va en la caña del calcetín,
+        dentro de la banda de zancada; las próximas a un giro se excluyen
+        como en la cadencia. El módulo va en la caña del calcetín,
         sobre el tobillo: la trayectoria vertical integrada es la del tobillo y
         su máximo en el balanceo es la excursión vertical del tobillo. La
         distancia mínima punta-suelo (MTC) exige un sensor en el antepié o
@@ -1239,29 +1462,35 @@ class GaitMetricsCalculator:
         ground = states["suelo"]
         tolerance = prepared.dt / 2
         events: list[Dict[str, Any]] = []
-        for start, stop in self._valid_runs(prepared, (*IMU_CHANNELS, *PRESSURE_CHANNELS)):
+        pairs: list[tuple[int, int]] = []
+        for start, stop in self._valid_runs(prepared, (*IMU_CHANNELS, *PRESSURE_CHANNELS), states["ritmo"]):
             # Instante de pie plano de cada apoyo: el de menor giro.
             flats = [a + start + int(np.argmin(gyro_norm[a + start:b + start])) for a, b in _true_runs(ground[start:stop] == 1)]
-            for first, second in zip(flats[:-1], flats[1:]):
-                duration = float(prepared.t[second] - prepared.t[first])
-                event = {
-                    "inicio_s": round(float(prepared.t[first]), 3), "duracion_s": round(duration, 3),
-                    "longitud_cm": float("nan"), "excursion_tobillo_cm": float("nan"), "altura_minima_cm": float("nan"),
-                    "motivo_exclusion": "", "motivo_altura": MTC_NOT_COMPUTABLE,
-                }
-                events.append(event)
-                if turning[first:second + 1].any():
-                    event["motivo_exclusion"] = "en_giro"
-                    continue
-                if not cfg.cycle_min_s - tolerance <= duration <= cfg.cycle_max_s + tolerance:
-                    event["motivo_exclusion"] = "duracion_fuera_de_rango"
-                    continue
-                position = self._integrate_stride(acc[first:second + 1], gyr[first:second + 1], prepared.t[first:second + 1])
-                event["longitud_cm"] = round(float(np.hypot(position[-1, 0], position[-1, 1])) * 100, 2)
-                swings = _true_runs(ground[first:second + 1] == 0)
-                if swings:
-                    a, b = max(swings, key=lambda run: run[1] - run[0])
-                    event["excursion_tobillo_cm"] = round(float(position[a:b, 2].max()) * 100, 2)
+            pairs.extend(zip(flats[:-1], flats[1:]))
+        near = self._turn_margin(prepared, [first for first, _second in pairs], [second for _first, second in pairs])
+        for (first, second), margin in zip(pairs, near):
+            duration = float(prepared.t[second] - prepared.t[first])
+            event = {
+                "inicio_s": round(float(prepared.t[first]), 3), "duracion_s": round(duration, 3),
+                "longitud_cm": float("nan"), "excursion_tobillo_cm": float("nan"), "altura_minima_cm": float("nan"),
+                "motivo_exclusion": "", "motivo_altura": MTC_NOT_COMPUTABLE,
+            }
+            events.append(event)
+            if turning[first:second + 1].any():
+                event["motivo_exclusion"] = "en_giro"
+                continue
+            if margin:
+                event["motivo_exclusion"] = "margen_giro"
+                continue
+            if not cfg.cycle_min_s - tolerance <= duration <= cfg.cycle_max_s + tolerance:
+                event["motivo_exclusion"] = "duracion_fuera_de_rango"
+                continue
+            position = self._integrate_stride(acc[first:second + 1], gyr[first:second + 1], prepared.t[first:second + 1])
+            event["longitud_cm"] = round(float(np.hypot(position[-1, 0], position[-1, 1])) * 100, 2)
+            swings = _true_runs(ground[first:second + 1] == 0)
+            if swings:
+                a, b = max(swings, key=lambda run: run[1] - run[0])
+                event["excursion_tobillo_cm"] = round(float(position[a:b, 2].max()) * 100, 2)
         prepared.cache[key] = (events, "OK", "")
         return prepared.cache[key]
 

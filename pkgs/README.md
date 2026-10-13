@@ -1,5 +1,5 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/MultipleSclerosisMonitoring/DPC_2024/ci.yml?branch=main)](https://github.com/MultipleSclerosisMonitoring/DPC_2024/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 # MS Monitoring
 
@@ -94,7 +94,8 @@ postgresql:
 movement:
   accel_threshold:      0.2
   gyro_threshold:       0.2
-  power_threshold:      0.5
+  accel_power_threshold: 0.0244140625   # band power integrated over frequency
+  gyro_power_threshold:  195.3125
   freq_band_min:        0.4
   freq_band_max:        1.4
   min_continuous_seconds: 10
@@ -120,4 +121,4 @@ Open `_build/html/index.html` in your browser.
 
 ## License
 
-This project is licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU Affero General Public License v3.0 or later**. See [LICENSE](LICENSE) for details.

@@ -188,6 +188,7 @@ class DataManager:
         :param end_datetime: End datetime in string format.
         :return: List of unique CodeIDs.
         :rtype: list[str]
+        :raises Exception: any query error is logged and raised to the caller.
         """
         try:
             # Influx contains experiment-table wall-clock timestamps serialized as UTC.
@@ -207,8 +208,9 @@ class DataManager:
             return [rec['CodeID'] for table in result for rec in table.records]
 
         except Exception as e:
-            print(i18n._("INFL-QRY-COD-ERR").format(e=e))
-            return []
+            # Un fallo de consulta no es lo mismo que un rango sin CodeIDs: se propaga.
+            logger.error(i18n._("INFL-QRY-COD-ERR").format(e=e))
+            raise
         
 
     def fetch_data(self, query: str, params: Optional[tuple] = None) -> pd.DataFrame:
@@ -558,7 +560,7 @@ class DataManager:
                 A sorted list of unique ``activity_all.id`` values.
 
             Raises:
-                psycopg2.Error: If a database error occurs (caught and logged in your current impl).
+                psycopg2.Error: If a database error occurs (rolled back, logged and raised).
         """
         try:
             sdt = ensure_utc(start_datetime)  # → aware UTC datetime
@@ -577,5 +579,7 @@ class DataManager:
                 rows = cur.fetchall()
                 return [r[0] for r in rows]
         except Exception as e:
-            print(i18n._("PGSQL-QRY-GEN-ERR").format(e=e))
-            return []    
+            # Un fallo de lectura no es lo mismo que un rango sin actividad: se deshace y se propaga.
+            self._rollback()
+            logger.error(i18n._("PGSQL-QRY-GEN-ERR").format(e=e))
+            raise

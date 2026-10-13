@@ -881,3 +881,35 @@ msgstr "processing.min_strides must map each test to an integer greater than zer
 #: src/gait_analysis/storage.py
 msgid "DEBUG_DERIVED_SAVED: {0} guardado ({1})"
 msgstr "DEBUG_DERIVED_SAVED: {0} saved ({1})"
+
+#: src/gait_analysis/metrics.py
+msgid "processing.decay_min_minutes debe estar entre 2 y el número de bloques del ensayo."
+msgstr "processing.decay_min_minutes must be between 2 and the number of blocks of the trial."
+
+#: src/gait_analysis/metrics.py
+msgid "DEBUG_SIGNAL_QUALITY: IMU repetida con presión activa {0:.1f} % en {1:.0f} s (estado: {2}); {3} intervalos largos recuperados como recepción retrasada"
+msgstr "DEBUG_SIGNAL_QUALITY: IMU repeated with active pressure {0:.1f} % over {1:.0f} s (state: {2}); {3} long intervals recovered as delayed reception"
+
+#: src/gait_analysis/query.py
+msgid "INFO_DUPLICATE_SAMPLES: Evento {0} ({1}): eliminadas {2} filas idénticas; {3} filas repiten _time con valores distintos y se conservan"
+msgstr "INFO_DUPLICATE_SAMPLES: Event {0} ({1}): removed {2} identical rows; {3} rows repeat _time with different values and are kept"
+
+#: src/gait_analysis/query.py
+msgid "La serie {0} del evento {1} no es creciente en _time"
+msgstr "Series {0} of event {1} is not increasing in _time"
+
+#: src/gait_analysis/query.py
+msgid "INFO_MULTIPLE_DEVICES: Evento {0} ({1}) con {2} dispositivos {3}; sus tramos se unen por tiempo"
+msgstr "INFO_MULTIPLE_DEVICES: Event {0} ({1}) with {2} devices {3}; their stretches are joined by time"
+
+#: src/gait_analysis/query.py
+msgid "WARN_DEVICES_OVERLAP: Evento {0} ({1}): los dispositivos '{2}' y '{3}' se solapan entre {4} y {5}; en ese tramo se descartan {6} filas de '{7}'"
+msgstr "WARN_DEVICES_OVERLAP: Event {0} ({1}): devices '{2}' and '{3}' overlap between {4} and {5}; in that stretch {6} rows of '{7}' are dropped"
+
+#: src/gait_analysis/metrics.py
+msgid "processing.heel_rhythm_window_s debe ser al menos el doble de processing.cycle_max_s."
+msgstr "processing.heel_rhythm_window_s must be at least twice processing.cycle_max_s."
+
+#: src/gait_analysis/pipeline.py
+msgid "WARN_T25FW_DISTANCE: Evento {0} ({1}): las {2} zancadas integradas suman {3:.2f} m; para los {4:g} m del T25FW se espera entre {5:.2f} y {4:g} m. Es un aviso: la longitud de zancada no está validada con una referencia."
+msgstr "WARN_T25FW_DISTANCE: Event {0} ({1}): the {2} integrated strides add up to {3:.2f} m; for the {4:g} m of the T25FW between {5:.2f} and {4:g} m is expected. This is a warning: stride length is not validated against a reference."

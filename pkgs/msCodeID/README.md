@@ -87,4 +87,4 @@ Contributions are welcome:
 
 ## License
 
-MIT License. See the root `LICENSE` file for details.
+GNU Affero General Public License v3.0 or later. See the root `LICENSE` file for details.

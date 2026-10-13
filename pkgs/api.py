@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query, Request, Security, Depends, status
 from fastapi.security import APIKeyHeader
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime, timedelta
 import os
@@ -64,6 +64,56 @@ SECURE_EXPORT_DIR = Path(
     os.getenv("MSGAIT_EXPORT_DIR") or Path(__file__).resolve().parent / "data" / "exports"
 ).resolve()
 
+# --- LÍMITES DE TAMAÑO (LR-44) ---
+MAX_IDS = 50                      # ventanas de actividad por petición: cada una lanza consultas a InfluxDB
+MAX_HEAD_ROWS = 50                # filas de la vista previa de /gait/detect
+MAX_SENSOR_RANGE = timedelta(minutes=10)   # un 6MWT dura 6 min
+MAX_SENSOR_ROWS = 100_000         # a ~110 filas/s, 10 min son ~66 000 filas
+MAX_METADATA_RANGE = timedelta(days=31)    # /codeids y /activity-windows solo devuelven metadatos
+DEFAULT_PAGE, MAX_PAGE = 100, 500
+
+
+def check_ids(ids: Optional[List[int]]) -> Optional[List[int]]:
+    """Valida una lista de identificadores de ``activity_all``.
+
+    Args:
+        ids (Optional[List[int]]): Identificadores recibidos, o ``None``.
+
+    Returns:
+        Optional[List[int]]: La misma lista.
+
+    Raises:
+        ValueError: Si está vacía, supera ``MAX_IDS``, tiene duplicados o algún
+            identificador es menor que 1.
+    """
+    if ids is None:
+        return ids
+    if not 1 <= len(ids) <= MAX_IDS:
+        raise ValueError(f"ids must contain between 1 and {MAX_IDS} values")
+    if any(value < 1 for value in ids):
+        raise ValueError("ids must be integers greater than or equal to 1")
+    if len(set(ids)) != len(ids):
+        raise ValueError("ids must not contain duplicates")
+    return ids
+
+
+def check_range(start: datetime, end: datetime, longest: timedelta) -> None:
+    """Rechaza un rango temporal invertido o más largo que el permitido.
+
+    Args:
+        start (datetime): Inicio del rango.
+        end (datetime): Fin del rango.
+        longest (timedelta): Duración máxima admitida.
+
+    Raises:
+        HTTPException: 400 si el inicio no es anterior al fin o el rango es demasiado largo.
+    """
+    if start >= end:
+        raise HTTPException(400, detail="start must be earlier than end")
+    if end - start > longest:
+        raise HTTPException(400, detail=f"time range too long: maximum {longest}")
+
+
 # ---- SINGLETONS SENCILLOS ----
 _dm: Optional[DataManager] = None
 _detector: Optional[MovementDetector] = None
@@ -107,11 +157,16 @@ def _shutdown():
 # ---- MODELS Pydantic ----
 
 class GaitRequest(BaseModel):
-    ids: List[int] = Field(..., min_length=1)
+    ids: List[int] = Field(..., min_length=1, max_length=MAX_IDS)
     save: bool = False
-    head_rows: int = Field(5, ge=0)
+    head_rows: int = Field(5, ge=0, le=MAX_HEAD_ROWS)
     verbose: int = Field(1, ge=0, le=3)
     output_xlsx: Optional[str] = None
+
+    @field_validator("ids")
+    @classmethod
+    def _ids_are_valid(cls, value: List[int]) -> List[int]:
+        return check_ids(value)
 
 class GaitResponse(BaseModel):
     effective_movement_rows: int
@@ -163,16 +218,19 @@ def health_ready():
 def list_codeids(
     start: datetime = Query(..., description="YYYY-MM-DD HH:MM:SS"),
     end:   datetime = Query(..., description="YYYY-MM-DD HH:MM:SS"),
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
+    offset: int = Query(0, ge=0),
+    api_key: str = Depends(get_api_key),
 ):
     """
-    Returns the list of CodeIDs (strings) in a range.
+    Returns the list of CodeIDs (strings) in a range of at most 31 days, paginated.
     Internally uses DataManager.get_codeids_in_range(start, end).
+    Requiere autenticación mediante X-API-Key.
     """
     assert _dm is not None
-    if start >= end:
-        raise HTTPException(400, detail="start must be earlier than end")
+    check_range(start, end, MAX_METADATA_RANGE)
     try:
-        return _dm.get_codeids_in_range(start, end)
+        return sorted(_dm.get_codeids_in_range(start, end))[offset:offset + limit]
     except Exception as e:
         raise HTTPException(500, detail=f"Error retrieving codeids: {e}")
 
@@ -182,19 +240,31 @@ def activity_windows(
     end:   Optional[datetime] = Query(None, description="YYYY-MM-DD HH:MM:SS"),
     ids:   Optional[List[int]] = Query(None, description="activity_all IDs (repeat ?ids=x)"),
     verbose: int = Query(0, ge=0, le=3),
+    limit: int = Query(DEFAULT_PAGE, ge=1, le=MAX_PAGE),
+    offset: int = Query(0, ge=0),
+    api_key: str = Depends(get_api_key),
 ):
     """
-    Returns activity windows from activity_all (DataFrame -> JSON).
+    Returns activity windows from activity_all (DataFrame -> JSON), paginated.
+    By ids (at most 50, no duplicates) or by a range of at most 31 days.
     Internally uses DataManager.segments_retrieval(fstart, fend, ids, verbose)
+    Requiere autenticación mediante X-API-Key.
     """
     assert _dm is not None
-    if ids is None and (start is None or end is None or start >= end):
-        raise HTTPException(400, detail="provide ids, or start earlier than end")
+    if ids is None:
+        if start is None or end is None:
+            raise HTTPException(400, detail="provide ids, or start earlier than end")
+        check_range(start, end, MAX_METADATA_RANGE)
+    else:
+        try:
+            check_ids(ids)
+        except ValueError as e:
+            raise HTTPException(422, detail=str(e))
     try:
         df = _dm.segments_retrieval(
             fstart=start, fend=end, ids=ids, verbose=verbose
         )
-        return df.to_dict(orient="records")
+        return df.iloc[offset:offset + limit].to_dict(orient="records")
     except Exception as e:
         raise HTTPException(500, detail=f"Error retrieving activity windows: {e}")
 
@@ -207,14 +277,23 @@ def sensor_data(
     api_key: str = Depends(get_api_key),
 ):
     """
-    Returns raw sensor data (DataFrame -> JSON) for a codeid/foot in a range.
+    Returns raw sensor data (DataFrame -> JSON) for a codeid/foot in a range
+    of at most 10 minutes and 100 000 rows (413 if exceeded).
     Requiere autenticación mediante X-API-Key.
     """
     assert _detector is not None
-    if start >= end:
-        raise HTTPException(400, detail="start must be earlier than end")
+    check_range(start, end, MAX_SENSOR_RANGE)
     try:
         df = _detector.fetch_sensor_data(start, end, codeid_id, foot)
+    except Exception as e:
+        logger.error(_("ERR_SENSOR_READ: Fallo al leer sensores: {e}").format(e=e))
+        raise HTTPException(500, detail=f"Error retrieving sensor data: {e}")
+    if len(df) > MAX_SENSOR_ROWS:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"the range returns {len(df)} rows; the maximum is {MAX_SENSOR_ROWS}. Request a shorter range.",
+        )
+    try:
         return df.to_dict(orient="records")
     except Exception as e:
         logger.error(_("ERR_SENSOR_READ: Fallo al leer sensores: {e}").format(e=e))

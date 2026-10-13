@@ -54,7 +54,7 @@ def write_config(tmp_path, csv_path):
         'influxdb': {'url': 'https://example.test:8086', 'org': 'o', 'bucket': 'b', 'token': 't', 'verify_ssl': False, 'retry_waits_s': []},
         'paths': {'registry_csv': str(csv_path), 'h5_path': 'store/custom.h5', 'output_dataset': 'out/dataset.xlsx'},
         'batch': {'test_type': 'GAIT'},
-        'processing': {'min_strides': {'GAIT': 2, '6MWT': 30, '2MWT': 10, 'T25FW': 4}},
+        'processing': {'min_strides': {'GAIT': 2, '6MWT': 30, '2MWT': 10, 'T25FW': 4}, 'imu_min_active_s': 5},
     }
     path = tmp_path / 'config.yaml'
     path.write_text(yaml.safe_dump(config))
@@ -144,19 +144,33 @@ def test_split_keeps_metadata_orders_and_deduplicates():
     series = split_series(raw, '10')
     assert set(series) == {'Left', 'Right'}
     foot = series['Left']
-    assert len(foot.frame) == 20 * FS and foot.exact_duplicates == 3 and foot.time_conflicts == 1
-    assert not foot.was_sorted and foot.frame['_time'].is_monotonic_increasing and foot.frame['_time'].is_unique
-    assert foot.frame['Ax'].eq(0.0).all()
+    # Las filas idénticas se eliminan; las que repiten hora con otros valores son muestras reales y se conservan.
+    assert len(foot.frame) == 20 * FS + 1 and foot.exact_duplicates == 3 and foot.time_conflicts == 1
+    assert not foot.was_sorted and foot.frame['_time'].is_monotonic_increasing
+    assert foot.frame['Ax'].eq(9.0).sum() == 1 and foot.report()['time_conflicts'] == 1
     assert {'Foot', 'DeviceName', 'mac', 'lat', 'lng', 'CodeID', '_measurement', 'app', 'type'} <= set(foot.frame.columns)
 
 
-def test_split_selects_device_with_most_samples(caplog):
-    raw = normalize_query_result([signal('Left', seconds=20), signal('Left', seconds=5, mac='BB:other')])
-    with caplog.at_level(logging.WARNING, logger='msGait'):
-        foot = split_series(raw, '10')['Left']
-    assert foot.device == 'AA:Left' and len(foot.frame) == 20 * FS
-    assert foot.devices_found == {'AA:Left': 2000, 'BB:other': 500}
-    assert 'WARN_MULTIPLE_DEVICES' in caplog.text
+def test_split_joins_the_devices_of_a_foot_by_time(caplog):
+    # Cambio de calcetín por batería: los tramos de los dos dispositivos se unen.
+    swapped = normalize_query_result([signal('Left', seconds=10), signal('Left', seconds=5, mac='BB:other', start='2025-01-01 10:00:10')])
+    with caplog.at_level(logging.INFO, logger='msGait'):
+        foot = split_series(swapped, '10')['Left']
+    assert foot.device == 'AA:Left, BB:other' and len(foot.frame) == 15 * FS and foot.overlap_dropped == 0
+    assert foot.devices_found == {'AA:Left': 1000, 'BB:other': 500} and foot.frame['_time'].is_monotonic_increasing
+    assert 'INFO_MULTIPLE_DEVICES' in caplog.text and 'WARN_DEVICES_OVERLAP' not in caplog.text
+    assert set(foot.frame['mac']) == {'AA:Left', 'BB:other'}
+
+    # Si se solapan, en el tramo común se conserva el que tiene más muestras en él, con aviso.
+    caplog.clear()
+    dense = signal('Left', seconds=5, mac='BB:other', start='2025-01-01 10:00:08')
+    sparse = signal('Left', seconds=10).iloc[::2]
+    with caplog.at_level(logging.INFO, logger='msGait'):
+        foot = split_series(normalize_query_result([sparse, dense]), '10')['Left']
+    assert 'WARN_DEVICES_OVERLAP' in caplog.text and foot.overlap_dropped == 100
+    start = pd.Timestamp('2025-01-01 10:00:08')
+    assert set(foot.frame.loc[foot.frame['_time'] >= start, 'mac']) == {'BB:other'}
+    assert set(foot.frame.loc[foot.frame['_time'] < start, 'mac']) == {'AA:Left'} and len(foot.frame) == 400 + 500
 
 
 def test_split_without_foot_tag_is_unknown():
@@ -521,7 +535,7 @@ def test_parallel_queries_keep_order_and_a_single_writer(tmp_path):
 
 
 def test_trial_table_quality_sheet_derived_events_and_excluded_patients(tmp_path, caplog):
-    from gait_analysis.storage import derived_dir_for
+    from gait_analysis.storage import events_path_for
     from gait_analysis.pipeline import GaitPipeline
     rows = ROWS + [('40', 'AMIR-48', '2025-01-03 10:00:00+01', '2025-01-03 10:00:20+01', 'GAIT'),
                    ('41', 'PAT-1', '2025-01-04 10:00:00+01', '2025-01-04 10:00:20+01', 'OTRA')]
@@ -551,20 +565,32 @@ def test_trial_table_quality_sheet_derived_events_and_excluded_patients(tmp_path
     assert other['estado_cadencia'] == 'NO_APLICA' and 'processing.min_strides' in other['motivo_cadencia']
 
     quality = book['Calidad_Series']
-    assert {'criterio_presion', 'rango_talon', 'periodicidad_talon', 'imu_valida', 'min_zancadas', 'motivo_cadencia'} <= set(quality.columns)
+    assert {'criterio_presion', 'rango_talon', 'periodicidad_talon', 'imu_estado', 'min_zancadas', 'motivo_cadencia'} <= set(quality.columns)
     assert len(quality) == 4 and set(quality['criterio_presion'].dropna()) == {'periodicidad'} and 'INFO_QUALITY_SUMMARY' in caplog.text
     assert quality.set_index('TrialID').loc[41, ['criterio_presion']].isna().all()       # sin análisis de marcha no hay criterio
 
     # Lo detectado en cada evento queda guardado para reconstruir de dónde sale cada cifra.
-    derived = derived_dir_for(tmp_path / 'store/custom.h5') / 'p_PAT-1/GAIT/trial_10.h5'
+    # Carpeta de resultados separada de los datos en bruto; una tabla de eventos por ensayo y pie.
+    derived = tmp_path / 'results/eventos/p_PAT-1/GAIT/trial_10.h5'
+    assert derived == events_path_for(tmp_path / 'results', Trial('10', 'PAT-1', 'GAIT', '', '', '', '', 20.0))
+    assert not (tmp_path / 'store').joinpath('custom_derivados').exists()
     with pd.HDFStore(str(derived), mode='r') as store:
-        assert {'/contactos', '/zancadas'} <= set(store.keys())
-        contacts = store.get('contactos')
-        meta = store.get_storer('contactos').attrs.trial_meta
-    assert set(contacts['Foot']) == {'Left', 'Right'} and len(contacts) == 38
-    assert contacts['instante'].min() >= pd.Timestamp('2025-01-01 10:00:00') and contacts['instante'].max() < pd.Timestamp('2025-01-01 10:00:21')
+        assert {'/Left/eventos', '/Right/eventos'} <= set(store.keys())
+        events = store.get('Left/eventos')
+        meta = store.get_storer('Left/eventos').attrs.trial_meta
+    assert {'tipo', 'inicio_s', 'fin_s', 'motivo', 'instante'} <= set(events.columns)
+    kinds = events['tipo'].value_counts().to_dict()
+    assert kinds['contacto_talon'] == 20 and kinds['despegue'] >= 18 and kinds['tramo_excluido'] == 1
+    assert events.loc[events['tipo'] == 'tramo_excluido', 'motivo'].tolist() == ['arranque']
+    assert events['instante'].min() >= pd.Timestamp('2025-01-01 10:00:00') and events['instante'].max() < pd.Timestamp('2025-01-01 10:00:21')
     assert meta['version_pipeline'] and len(meta['huella_config_processing']) == 16
+    assert pd.Timestamp(meta['fecha_ejecucion']) <= pd.Timestamp.now()
 
+    # El estado de confianza acompaña a cada valor; los WARNING entran en las medias y se cuentan.
+    assert per_trial.loc[0, 'GAIT_Left_estado_cadencia'] == 'OK' and 'GAIT_Left_estado_fases' in per_trial.columns
+    patients = book['Datos_Pacientes']
+    assert {'GAIT_ensayos_warning', 'GAIT_Left_estado_cadencia_n_warning'} <= set(patients.columns) and not any(column.endswith('estado_cadencia') for column in patients.columns)
+    assert {'imu_estado', 'presion_activa_seg', 'giros_excluidos', 'zancadas_margen_giro'} <= set(quality.columns)
 
 def test_only_network_errors_are_retried(tmp_path):
     from gait_analysis.extractor import is_network_error
@@ -587,3 +613,33 @@ def test_only_network_errors_are_retried(tmp_path):
     assert [(r.status, r.attempts) for r in results] == [('QUERY_ERROR', 1), ('OK', 1)]
     # Tiempo de conexión corto, separado del de lectura.
     assert constructor.call_args.kwargs['timeout'][0] == 10000
+
+
+def test_t25fw_stride_lengths_are_checked_against_the_test_distance_as_a_warning(caplog):
+    from gait_analysis.metrics import ProcessingConfig
+    from gait_analysis.pipeline import GaitPipeline
+    from gait_analysis.registry import Trial
+    pipeline = object.__new__(GaitPipeline)
+    pipeline.processing = ProcessingConfig()
+    assert pipeline.processing.t25fw_distance_m == 7.62
+
+    def strides(lengths_cm, excluded=0):
+        return [{'longitud_cm': value, 'motivo_exclusion': ''} for value in lengths_cm] + \
+               [{'longitud_cm': float('nan'), 'motivo_exclusion': 'en_giro'}] * excluded
+
+    def check(test, events):
+        trial = Trial('21', 'PAT-1', test, 'a', 'b', 'a', 'b', 5.0)
+        with caplog.at_level(logging.WARNING, logger='msGait'):
+            caplog.clear()
+            return pipeline._t25fw_distance_check(trial, 'Left', events), 'WARN_T25FW_DISTANCE' in caplog.text
+
+    # 5 zancadas de 1,2 m = 6,0 m: faltan 1,62 m, menos de dos zancadas (parciales del principio y del final).
+    assert check('T25FW', strides([120] * 5)) == ({'t25fw_suma_longitudes_m': 6.0, 't25fw_distancia_coherente': True}, False)
+    # Más distancia que la de la prueba, o mucha menos: aviso, sin tocar la longitud ni su estado.
+    assert check('T25FW', strides([120] * 8)) == ({'t25fw_suma_longitudes_m': 9.6, 't25fw_distancia_coherente': False}, True)
+    assert check('T25FW', strides([120] * 2)) == ({'t25fw_suma_longitudes_m': 2.4, 't25fw_distancia_coherente': False}, True)
+    # Cada zancada que no pudo integrarse amplía el margen en una zancada media.
+    assert check('T25FW', strides([120] * 2, excluded=3))[0]['t25fw_distancia_coherente'] is True
+    result, warned = check('T25FW', strides([], excluded=2))
+    assert np.isnan(result['t25fw_suma_longitudes_m']) and not warned
+    assert check('6MWT', strides([120] * 50)) == ({}, False)       # solo en T25FW: no hay distancia anotada en el 6MWT

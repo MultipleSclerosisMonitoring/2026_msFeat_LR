@@ -172,7 +172,7 @@ def test_no_module_silences_tls_warnings_or_rewrites_the_host():
     done = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip().splitlines()[-1] == '1'
-    for file in ('src/gait_analysis/pipeline.py', 'src/gait_analysis/extractor.py', 'pkgs/msTools/data_manager.py', 'InfluxDBms/cInfluxDB.py'):
+    for file in ('src/gait_analysis/pipeline.py', 'src/gait_analysis/extractor.py', 'pkgs/msTools/data_manager.py'):
         text = (ROOT / file).read_text(encoding='utf-8')
         assert 'disable_warnings' not in text and '138.100' not in text and 'normalize_influx_url' not in text, file
 
@@ -223,6 +223,28 @@ def test_readmes_only_reference_files_that_exist():
         for link in re.findall(r'\]\((?!http)([^)#]+)\)', text):
             assert ((ROOT / readme).parent / link).exists(), f'{readme} enlaza {link}'
         assert 'InfluxConfig' not in text and 'generar_informe_clinico' not in text and 'main.py' not in text
+        assert 'Pydantic' not in text and 'Balanceos' not in text
+    core = (ROOT / 'src/gait_analysis/README.md').read_text(encoding='utf-8')
+    for module in sorted(p.name for p in (ROOT / 'src/gait_analysis').glob('*.py')):
+        assert module in core, f'src/gait_analysis/README.md no menciona {module}'
+
+
+def test_retired_files_are_gone_and_legacy_config_verifies_tls():
+    for retired in ('consulta_influxdb.py', 'InfluxDBms/cInfluxDB.py', 'pkgs/config.yaml'):
+        assert not (ROOT / retired).exists(), retired
+    legacy = yaml.safe_load((ROOT / 'pkgs/.config.yaml').read_text(encoding='utf-8'))
+    assert legacy['influxdb'].get('verify_ssl') is True and 'verify' not in legacy['influxdb']
+    assert legacy['movement']['min_continuous_seconds'] == 10 and 'min_continuous_hits' not in legacy['movement']
+
+
+def test_one_licence_for_every_component():
+    assert (ROOT / 'LICENSE').read_bytes() == (ROOT / 'pkgs/LICENSE').read_bytes()
+    assert 'AFFERO' in (ROOT / 'LICENSE').read_text(encoding='utf-8')[:200]
+    for file in ('pyproject.toml', 'pkgs/pyproject.toml'):
+        assert 'AGPL-3.0-or-later' in (ROOT / file).read_text(encoding='utf-8'), file
+    for readme in ('pkgs/README.md', 'pkgs/msGait/README.md', 'pkgs/msTools/README.md', 'pkgs/msCodeID/README.md',
+                   'pkgs/ms_monitoring/README.md'):
+        assert 'MIT' not in (ROOT / readme).read_text(encoding='utf-8'), readme
 
 
 # --- Contrato de la hora: el registro guarda instantes con zona; InfluxDB, hora de reloj ---

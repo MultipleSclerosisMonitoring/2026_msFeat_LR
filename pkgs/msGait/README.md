@@ -38,15 +38,17 @@ movement:
   accel_threshold: 0.2
   # Threshold for the gyroscope module (is_effective_by_time)
   gyro_threshold: 60
-  # Power threshold in the Accel frequency band
-  accel_power_threshold: 0.125
-  # Power threshold in the Gyro frequency band
-  gyro_power_threshold: 1000
+  # Band power integrated over frequency (PSD x Hz) in the Accel band
+  accel_power_threshold: 0.0244140625
+  # Band power integrated over frequency in the Gyro band
+  gyro_power_threshold: 195.3125
   # Frequency band for Welch (Hz)
   freq_band_min: 0.4
   freq_band_max: 1.6
-  # Minimum number of peaks within an analysis segment ~ 7s
-  min_continuous_hits: 3
+  # Minimum duration (s) of a sustained active streak; operational value, required
+  min_continuous_seconds: 10
+  # Optional: max_pause_s (default 1 / freq_band_min), merge_gap_s (10), fs_tolerance (0.10),
+  # tail_policy (align | minimum, the latter with tail_min_samples)
 ```
 
 ## Python Usage
@@ -123,4 +125,4 @@ make html
 
 ## License
 
-MIT. See [LICENSE](../LICENSE).  
+AGPL-3.0-or-later. See [LICENSE](../LICENSE).  

@@ -99,4 +99,4 @@ CREATE INDEX IF NOT EXISTS idx_effective_gait_codeid
 
 ## License
 
-This project is released under the **MIT License**. See the `LICENSE` file for details.
+This project is released under the **GNU Affero General Public License v3.0 or later**. See the `LICENSE` file for details.

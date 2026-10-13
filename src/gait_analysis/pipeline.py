@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 import logging
 from influxdb_client import InfluxDBClient
-from gait_analysis.metrics import REPORT_METRICS, SYMMETRY_METRIC, GaitMetricsCalculator, ProcessingConfig
+from gait_analysis.metrics import METRIC_STATE, REPORT_METRICS, SYMMETRY_METRIC, GaitMetricsCalculator, ProcessingConfig
 from msConfig import influx_client_options, load_config
 from msTools import i18n
 from msTools.i18n import _
@@ -41,8 +41,8 @@ POOLED_NOTE = "zancadas de los intentos del mismo día juntas; resultado orienta
 # Alcance de cada hoja del Excel (se escribe en la hoja Leeme).
 SHEET_GUIDE = (
     ("Leeme", "Alcance del informe y contenido de cada hoja.", "-"),
-    ("Datos_Ensayos", "Todas las métricas de cada ensayo en una fila, con su fecha: es la tabla para seguir a un paciente en el tiempo. Columnas {test}_{pie}_{métrica}.", "evento"),
-    ("Datos_Pacientes", "Resumen por paciente: media de sus ensayos con valor. Columnas {test}_{pie}_{métrica}.", "paciente"),
+    ("Datos_Ensayos", "Todas las métricas de cada ensayo en una fila, con su fecha: es la tabla para seguir a un paciente en el tiempo. Columnas {test}_{pie}_{métrica} y su estado de confianza {test}_{pie}_estado_{grupo} (OK o WARNING).", "evento"),
+    ("Datos_Pacientes", "Resumen por paciente: media de sus ensayos con valor, incluidos los que están en WARNING; {test}_ensayos_warning dice cuántos lo están y {test}_{pie}_estado_{grupo}_n_warning, cuántos en cada grupo de métricas. Columnas {test}_{pie}_{métrica}.", "paciente"),
     ("Calidad_Series", "Resultado de cada filtro de calidad por serie (presión, IMU, mínimo de zancadas) y motivo principal de lo que no se informa.", "evento y pie"),
     ("Agregacion_Pacientes", "Ensayos que entran en cada paciente y test, cuántos son bilaterales y regla aplicada.", "paciente y test"),
     ("Ensayos", "Todas las métricas de cada ensayo y pie, con estado, motivo, cobertura y método de cada una.", "evento y pie"),
@@ -58,12 +58,19 @@ REPORT_SCOPE = (
     "Único informe del proyecto. Métricas temporales por pie (zancadas, cadencia de zancada, fases y decaimiento en 6MWT), "
     "longitud de zancada y excursión vertical del tobillo por integración entre pies planos, estas dos sin validar con una "
     "referencia. La distancia mínima punta-suelo (MTC) no se calcula: el módulo va en el tobillo y falta trasladar la "
-    "trayectoria a la punta. En TUG no se informan métricas de marcha (su métrica es la duración). En T25FW se descarta la "
-    "primera zancada de cada pie, se juntan las zancadas de los intentos del mismo día y el resultado es orientativo. No hay eventos anotados ni otro dispositivo de referencia: la "
-    "comprobación disponible es visual (Grafana) y de coherencia interna. Dentro de un tramo sin huecos se supone que no "
+    "trayectoria a la punta. En TUG no se informan métricas de marcha (su métrica es la duración). En todos los ensayos se "
+    "descarta la primera zancada de cada pie y, junto a cada giro, las zancadas de frenada y de arranque; si la IMU no es "
+    "válida no se sabe dónde están los giros y esa exclusión no se aplica (columna giros_excluidos). En T25FW se juntan las "
+    "zancadas de los intentos del mismo día y el resultado es orientativo; en cada intento se avisa si la suma de las "
+    "longitudes de zancada no es coherente con los 7,62 m de la prueba (t25fw_distancia_coherente), sin que eso valide ni "
+    "calibre la longitud. El decaimiento del 6MWT es la pendiente de la "
+    "cadencia minuto a minuto. No hay eventos anotados ni otro dispositivo de referencia: la "
+    "comprobación disponible es visual (Grafana) y de coherencia interna. Por eso siguen sin validar con una referencia "
+    "la detección de giros y sus umbrales, la correspondencia de cada contacto de talón con un apoyo real, la polaridad de "
+    "la presión (la lectura es relativa, no una presión absoluta), la longitud de zancada y la excursión del tobillo. Dentro de un tramo sin huecos se supone que no "
     "falta ninguna muestra; eso cubre las ráfagas y los retrasos de recepción, no las pérdidas pequeñas sin hueco detectable. Una celda vacía significa que la métrica no "
-    "pudo calcularse; nunca se escribe cero en su lugar. Los valores con estado WARNING se conservan y entran en las "
-    "medias."
+    "pudo calcularse; nunca se escribe cero en su lugar. Los valores con estado WARNING se conservan y entran siempre en "
+    "las medias y en los gráficos; su estado de confianza acompaña a cada valor."
 )
 
 # Regla explícita de agregación por paciente (se escribe también en el Excel).
@@ -146,8 +153,8 @@ class GaitPipeline:
             stride_res = {**empty, "stride_length_cm": np.nan, "stride_length_std_cm": np.nan}
             height_res = {**empty, "altura_minima_cm": np.nan, "excursion_tobillo_cm": np.nan, "excursion_tobillo_std_cm": np.nan}
         else:
-            # En T25FW se descarta el arranque: la primera zancada completa de cada pie.
-            skip = self.processing.t25fw_skip_first_strides if trial.test_type == "T25FW" else 0
+            # Arranque: se descarta la primera zancada completa de cada pie.
+            skip = self.processing.skip_first_strides
             options = {"excluir_giros": True, "min_strides": minimum, "skip_first": skip}
             cad_res = self.calculator.calcular_cadencia(prepared, **options)
             fas_res = self.calculator.calcular_fases(prepared, **options)
@@ -176,7 +183,9 @@ class GaitPipeline:
             "huecos_imu": report.get("huecos_por_grupo", {}).get("imu", np.nan),
             "huecos_presion": report.get("huecos_por_grupo", {}).get("presion", np.nan),
             "imu_valida": report.get("imu_valida", np.nan),
-            "imu_repeticion_en_movimiento_prc": report.get("imu_repeticion_en_movimiento_prc", np.nan),
+            "imu_estado": report.get("imu_estado", ""),
+            "presion_activa_seg": report.get("presion_activa_seg", np.nan),
+            "imu_repeticion_presion_activa_prc": report.get("imu_repeticion_presion_activa_prc", np.nan),
             "intervalos_recuperados": report.get("intervalos_recuperados", np.nan),
             "vertical_estimada": report.get("vertical_estimada", np.nan),
             "inclinacion_grados": report.get("inclinacion_grados", np.nan),
@@ -184,6 +193,8 @@ class GaitPipeline:
             "rango_talon": report.get("rango_talon", np.nan),
             "periodicidad_talon": report.get("periodicidad_talon", np.nan),
             "criterio_presion": report.get("criterio_presion", ""),
+            "ventanas_ritmo": report.get("ventanas_ritmo", np.nan),
+            "ventanas_con_ritmo_prc": report.get("ventanas_con_ritmo_prc", np.nan),
             "zancadas": cad_res["num_zancadas"],
             "cadencia_zancada": cad_res["cadencia_zancada"],
             "tiempo_zancada_seg": cad_res["tiempo_zancada_seg"],
@@ -196,6 +207,9 @@ class GaitPipeline:
             "n_giros": cad_res.get("n_giros", np.nan),
             "n_giros_descartados": cad_res.get("n_giros_descartados", np.nan),
             "angulo_giros_grados": cad_res.get("angulo_giros_grados", np.nan),
+            # False: no se pudo localizar los giros (IMU no válida) y la cadencia incluye frenadas y arranques.
+            "giros_excluidos": cad_res.get("giros_evaluados", np.nan),
+            "zancadas_margen_giro": cad_res.get("zancadas_margen_giro", np.nan),
             "modalidad_zancadas": cad_res.get("modalidad", ""),
             "cobertura_cadencia": covered("S0", "S1", "S2"),
             "filtro_cadencia": cad_res.get("metodo_filtro", ""),
@@ -215,6 +229,7 @@ class GaitPipeline:
             "n_zancadas_longitud": stride_res.get("n_zancadas_longitud", np.nan),
             "n_zancadas_longitud_excluidas": stride_res.get("n_zancadas_longitud_excluidas", np.nan),
             "metodo_longitud": stride_res.get("metodo", ""),
+            **self._t25fw_distance_check(trial, side, height_res.get("eventos", [])),
             "excursion_tobillo_cm": height_res["excursion_tobillo_cm"],
             "excursion_tobillo_std_cm": height_res["excursion_tobillo_std_cm"],
             "altura_minima_cm": height_res["altura_minima_cm"],
@@ -232,9 +247,13 @@ class GaitPipeline:
         }
         if trial.test_type == "6MWT":
             decay_res = self.calculator.calcular_decaimiento_6mwt(
-                df_side, duracion_registro_s=trial.duration_s, inicio=experiment_wallclock(trial.d_from)
+                df_side, duracion_registro_s=trial.duration_s, inicio=experiment_wallclock(trial.d_from),
+                skip_first=self.processing.skip_first_strides,
             )
             metrics["decaimiento_prc"] = decay_res["6mwt_decaimiento"]
+            metrics["pendiente_cadencia"] = decay_res["pendiente_cadencia"]
+            metrics["minutos_con_cadencia"] = decay_res.get("minutos_con_cadencia", np.nan)
+            metrics["cadencias_minuto"] = str(decay_res.get("cadencias_minuto", "")) if decay_res.get("cadencias_minuto") else ""
             metrics["minutos_validos"] = decay_res.get("minutos_validos", np.nan)
             metrics["ensayo_6mwt_completo"] = decay_res.get("ensayo_completo", np.nan)
             metrics["estado_decaimiento"] = decay_res.get("status", "")
@@ -259,48 +278,92 @@ class GaitPipeline:
             "longitudes": [event["longitud_cm"] for event in events if not event["motivo_exclusion"]],
             "alturas": [event["excursion_tobillo_cm"] for event in events if np.isfinite(event["excursion_tobillo_cm"])],
             "contactos": cad_res.get("contactos_s", []), "giros": cad_res.get("giros", []),
+            "despegues": cad_res.get("despegues_s", []), "tramos_excluidos": cad_res.get("tramos_excluidos", []),
         }
-        if skip_first := (self.processing.t25fw_skip_first_strides if trial.test_type == "T25FW" else 0):
+        if skip_first := self.processing.skip_first_strides:
             for name in ("longitudes", "alturas"):
                 pool[name] = pool[name][skip_first:]
         return metrics, events, pool
 
-    def _save_derived(self, trial: Trial, strides: list[dict[str, Any]], pools: list[dict[str, Any]], config_hash: str) -> None:
-        """Guarda lo detectado en un evento para poder reconstruir de dónde sale cada cifra.
+    def _t25fw_distance_check(self, trial: Trial, side: str, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Compara la suma de longitudes de zancada de un intento de T25FW con la distancia de la prueba.
 
-        Por evento se guardan los contactos de talón, las zancadas integradas y
-        los giros de cada pie, con su instante en el reloj de las señales, la
-        versión del pipeline y la huella de la configuración. Un fallo al
-        guardar se avisa pero no detiene el análisis.
+        Es un aviso de coherencia, no una validación ni una calibración: la
+        longitud de zancada no se corrige ni cambia de estado. Un pie recorre
+        la distancia de la prueba (``t25fw_distance_m``) en zancadas completas
+        menos, como mucho, una zancada parcial al principio y otra al final.
+        Por eso la suma de las zancadas integradas se considera coherente si no
+        supera la distancia y no le faltan más de dos zancadas medias, más una
+        por cada zancada detectada que no pudo integrarse.
+
+        Args:
+            trial (Trial): Evento analizado.
+            side (str): ``Left`` o ``Right``.
+            events (list[dict[str, Any]]): Zancadas integradas del pie, con su
+                longitud y su causa de exclusión.
+
+        Returns:
+            dict[str, Any]: ``t25fw_suma_longitudes_m`` y
+            ``t25fw_distancia_coherente``; vacío si la prueba no es T25FW.
+        """
+        if trial.test_type != "T25FW":
+            return {}
+        lengths = [event["longitud_cm"] / 100 for event in events if not event["motivo_exclusion"]]
+        if not lengths:
+            return {"t25fw_suma_longitudes_m": np.nan, "t25fw_distancia_coherente": np.nan}
+        total, distance = float(np.sum(lengths)), self.processing.t25fw_distance_m
+        lowest = max(0.0, distance - (len(events) - len(lengths) + 2) * float(np.mean(lengths)))
+        coherent = bool(lowest <= total <= distance)
+        if not coherent:
+            logger.warning(_("WARN_T25FW_DISTANCE: Evento {0} ({1}): las {2} zancadas integradas suman {3:.2f} m; para los {4:g} m del T25FW se espera entre {5:.2f} y {4:g} m. Es un aviso: la longitud de zancada no está validada con una referencia.").format(
+                trial.trial_id, side, len(lengths), total, distance, lowest))
+        return {"t25fw_suma_longitudes_m": round(total, 2), "t25fw_distancia_coherente": coherent}
+
+    def _save_derived(self, trial: Trial, strides: list[dict[str, Any]], pools: list[dict[str, Any]], config_hash: str) -> None:
+        """Guarda lo detectado en un ensayo para poder reconstruir de dónde sale cada cifra.
+
+        En la carpeta de resultados (``paths.results_folder``), separada de los
+        datos en bruto, se escribe un archivo por ensayo con una tabla de
+        eventos por pie: contactos de talón, despegues, giros y tramos
+        excluidos con su motivo, cada uno con su instante en el reloj de las
+        señales. Lleva la versión del código, la huella de la configuración y
+        la fecha de la ejecución. El Excel sigue siendo solo el resumen. Un
+        fallo al guardar se avisa pero no detiene el análisis.
 
         Args:
             trial (Trial): Evento analizado.
             strides (list[dict[str, Any]]): Filas por zancada (hoja ``Zancadas``).
-            pools (list[dict[str, Any]]): Por pie: inicio de la serie, contactos y giros.
+            pools (list[dict[str, Any]]): Por pie: inicio de la serie y eventos detectados.
             config_hash (str): Huella de la configuración de procesado.
         """
-        starts = {row["Foot"]: row["inicio_serie"] for row in pools}
-        contacts = [
-            {"Foot": row["Foot"], "t_s": t, "instante": row["inicio_serie"] + pd.to_timedelta(t, unit="s")}
-            for row in pools for t in row["contactos"]
-        ]
-        turns = [
-            {"Foot": row["Foot"], **turn, "instante": row["inicio_serie"] + pd.to_timedelta(turn["inicio_s"], unit="s")}
-            for row in pools for turn in row["giros"]
-        ]
-        stride_rows = [
-            {**{k: v for k, v in row.items() if k not in ("TrialID", "CodeID", "test_type")},
-             "instante": starts[row["Foot"]] + pd.to_timedelta(row["inicio_s"], unit="s")}
-            for row in strides if row["Foot"] in starts
-        ]
+        tables: dict[str, pd.DataFrame] = {}
+        for row in pools:
+            start = row["inicio_serie"]
+            events = [{"tipo": "contacto_talon", "inicio_s": t, "fin_s": t, "motivo": "", "angulo_grados": np.nan} for t in row["contactos"]]
+            events += [{"tipo": "despegue", "inicio_s": t, "fin_s": t, "motivo": "", "angulo_grados": np.nan} for t in row["despegues"]]
+            events += [{"tipo": "giro", "inicio_s": turn["inicio_s"], "fin_s": turn["fin_s"], "motivo": "",
+                        "angulo_grados": turn["angulo_grados"]} for turn in row["giros"]]
+            events += [{"tipo": "tramo_excluido", "inicio_s": item["inicio_s"], "fin_s": item["fin_s"], "motivo": item["motivo"],
+                        "angulo_grados": np.nan} for item in row["tramos_excluidos"]]
+            table = pd.DataFrame(events)
+            if not table.empty:
+                table = table.sort_values(["inicio_s", "tipo"], kind="stable").reset_index(drop=True)
+                table["instante"] = start + pd.to_timedelta(table["inicio_s"], unit="s")
+                tables[f"{row['Foot']}/eventos"] = table
+            foot_strides = pd.DataFrame([
+                {**{k: v for k, v in item.items() if k not in ("TrialID", "CodeID", "test_type", "Foot")},
+                 "instante": start + pd.to_timedelta(item["inicio_s"], unit="s")}
+                for item in strides if item["Foot"] == row["Foot"]
+            ])
+            if not foot_strides.empty:
+                tables[f"{row['Foot']}/zancadas"] = foot_strides
         meta = {
             "id": trial.trial_id, "codeid": trial.codeid, "t_code": trial.test_type, "d_from": trial.d_from,
             "d_until": trial.d_until, "version_pipeline": PIPELINE_VERSION, "huella_config_processing": config_hash,
+            "fecha_ejecucion": datetime.now().isoformat(timespec="seconds"),
         }
         try:
-            write_derived(self.h5_path, trial, {
-                "contactos": pd.DataFrame(contacts), "zancadas": pd.DataFrame(stride_rows), "giros": pd.DataFrame(turns),
-            }, meta)
+            write_derived(self.config["paths"]["results_folder"], trial, tables, meta)
         except StorageError as error:
             logger.warning(_("WARN_DERIVED_NOT_SAVED: Evento {0}: no se guardaron los eventos detectados ({1})").format(trial.trial_id, error))
 
@@ -358,6 +421,9 @@ class GaitPipeline:
             for name in REPORT_METRICS:
                 if name in metrics:
                     wide[f"{tt}_{side}_{name}"] = metrics[name]
+            # Estado de confianza de cada grupo de métricas, como un campo más del registro.
+            for state in dict.fromkeys(METRIC_STATE[name] for name in REPORT_METRICS if name in metrics):
+                wide[f"{tt}_{side}_{state}"] = metrics.get(state, "")
 
         # --- Cálculo de Asimetría Bilateral: EXCLUSIVO del evento actual ---
         cad_l, cad_r = cadences.get("Left", 0.0), cadences.get("Right", 0.0)
@@ -418,8 +484,20 @@ class GaitPipeline:
             por paciente y test (ensayos usados, bilaterales y regla).
         """
         events = pd.DataFrame(wide_rows).drop(columns=["TrialID", "test_type", "d_from", "d_until"])
-        metrics = events.drop(columns=["CodeID"]).apply(lambda x: pd.to_numeric(x, errors="coerce"))
+        states = [column for column in events.columns if any(column.endswith(f"_{state}") for state in set(METRIC_STATE.values()))]
+        metrics = events.drop(columns=["CodeID", *states]).apply(lambda x: pd.to_numeric(x, errors="coerce"))
         patients = metrics.groupby(events["CodeID"], sort=False).mean()
+        # Los WARNING entran en la media; se cuenta cuántos ensayos de cada prueba lo están.
+        for test in sorted({row["test_type"] for row in wide_rows}):
+            own = [column for column in states if column.startswith(f"{test}_")]
+            if own:
+                warned = events[own].eq("WARNING").any(axis=1).groupby(events["CodeID"], sort=False).sum()
+                done = events[f"{test}_duracion_seg"].notna().groupby(events["CodeID"], sort=False).any()
+                patients[f"{test}_ensayos_warning"] = warned.where(done).reindex(patients.index)
+                # Y por pie y grupo de métricas, para poder distinguirlos en cada gráfico.
+                for column in own:
+                    count = events[column].eq("WARNING").groupby(events["CodeID"], sort=False).sum()
+                    patients[f"{column}_n_warning"] = count.where(done).reindex(patients.index)
         pooled_counts: dict[tuple[str, str], int] = defaultdict(int)
         for test in POOLED_TESTS:
             minimum = self._min_strides(test)
@@ -733,10 +811,13 @@ class GaitPipeline:
         df_final = df_patients.astype(object).fillna("N/A")
         tests = sorted(df_events["test_type"].unique())
         quality_columns = [
-            "TrialID", "CodeID", "test_type", "Foot", "criterio_presion", "rango_talon", "periodicidad_talon",
-            "cobertura_presion", "huecos_presion", "imu_valida", "imu_repeticion_en_movimiento_prc", "n_huecos",
+            "TrialID", "CodeID", "test_type", "Foot", "criterio_presion", "rango_talon", "periodicidad_talon", "ventanas_ritmo",
+            "ventanas_con_ritmo_prc",
+            "cobertura_presion", "huecos_presion", "imu_estado", "presion_activa_seg", "imu_repeticion_presion_activa_prc",
+            "giros_excluidos", "zancadas_margen_giro", "n_huecos",
             "intervalos_recuperados", "min_zancadas", "contactos_talon", "zancadas", "zancadas_en_banda_prc",
             "estado_cadencia", "motivo_cadencia", "estado_zancada", "motivo_zancada",
+            "t25fw_suma_longitudes_m", "t25fw_distancia_coherente",
         ]
         df_feet = pd.DataFrame(foot_rows)
         df_quality = df_feet[[column for column in quality_columns if column in df_feet.columns]].copy()

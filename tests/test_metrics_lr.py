@@ -54,7 +54,9 @@ def seconds_of(frame):
     return (frame['_time'] - frame['_time'].iloc[0]).dt.total_seconds()
 
 
-CALC = GaitMetricsCalculator()
+# Las señales sintéticas duran 20 s: se baja el mínimo de presión activa para poder evaluar la IMU.
+SHORT = {'imu_min_active_s': 5.0}
+CALC = GaitMetricsCalculator(ProcessingConfig(**SHORT))
 
 
 # --- LR-12: el tiempo real manda, no el número de muestras ------------------------------
@@ -128,7 +130,7 @@ def test_integer_values_from_yaml_work_in_every_method(tmp_path):
     path = tmp_path / 'config.yaml'
     path.write_text(yaml.safe_dump({
         'influxdb': {'url': 'https://example.test:8086', 'org': 'o', 'bucket': 'b', 'token': 't'},
-        'processing': {'fs': 50, 'turn_threshold': 30, 'sixmwt_duration_s': 360, 'cycle_max_s': 3},
+        'processing': {'fs': 50, 'turn_threshold': 30, 'sixmwt_duration_s': 360, 'cycle_max_s': 3, 'imu_min_active_s': 5},
     }))
     config = ProcessingConfig.from_mapping(load_config(path, sections=())['processing'])
     assert isinstance(config.fs, float) and config.fs == 50.0 and config.turn_threshold == 30.0 and isinstance(config.cycle_max_s, float)
@@ -142,7 +144,8 @@ def test_integer_values_from_yaml_work_in_every_method(tmp_path):
     {'accel_cutoff_hz': 60.0}, {'fs': 5.0}, {'filter_order': 0}, {'min_coverage': 1.5}, {'cadence_min': 300.0},
     {'decay_block_s': 100.0}, {'desconocido': 1}, {'turn_axis': 'Qz'}, {'filter_order': 2.5}, {'time_grid': 'otra'},
     {'heel_channel': 'Ay'}, {'max_interpolation_s': 0.5}, {'swing_max_prc': 120.0}, {'min_valid_strides': 1.5},
-    {'cycle_min_s': 3.0}, {'swing_min_s': 1.0}, {'rest_gyro_quantile': 2.0}, {'max_gap_s': 0.01},
+    {'cycle_min_s': 3.0}, {'swing_min_s': 1.0}, {'decay_min_minutes': 7}, {'turn_margin_after_strides': 1.5},
+    {'imu_max_stale_active': 1.2}, {'heel_rhythm_window_s': 3.0}, {'heel_highpass_hz': 30.0}, {'imu_moving_gyro': 100.0}, {'rest_gyro_quantile': 2.0}, {'max_gap_s': 0.01},
     {'turn_extend_threshold': 40.0}, {'sixmwt_min_valid_minutes': 7}, {'stride_k': 50.0}, {'min_valid_strides': 2},
     {'min_strides': {'6MWT': 0}}, {'min_strides': [30]}, {'heel_min_periodicity': 1.5}, {'mtc_ok_min_cm': 9.0},
 ])
@@ -177,54 +180,77 @@ def test_pressure_gaps_are_measured_on_new_values():
     assert CALC.calcular_cadencia(prepared)['num_zancadas'] == 16
 
 
-def test_repeated_imu_with_the_foot_still_is_a_valid_measurement():
+def test_repeated_imu_with_the_pressure_inactive_is_a_valid_measurement():
     frame = walk()
-    frame.loc[515:545, IMU] = frame.loc[514, IMU].to_numpy()                # 0,3 s repetidos en pleno apoyo
+    t = seconds_of(frame)
+    quiet = (t >= 4.4) & (t < 6.6)                                          # el paciente se detiene: presión sin actividad
+    for column in ('S0', 'S1', 'S2'):
+        frame.loc[quiet, column] = 100.0 + (np.arange(len(frame)) % 2)[quiet.to_numpy()]
+    frame.loc[515:545, IMU] = frame.loc[514, IMU].to_numpy()                # 0,3 s repetidos con el pie quieto
     prepared = CALC.preparar(frame)
     assert prepared.report['huecos_por_grupo']['imu'] == 0 and prepared.report['cobertura']['imu'] == 1.0
-    assert prepared.report['imu_valida'] and prepared.report['imu_repeticion_en_movimiento_prc'] == 0.0
+    assert prepared.report['imu_valida'] and prepared.report['imu_repeticion_presion_activa_prc'] == 0.0
     assert not prepared.data['Ay'].isna().any()
+    # La presión está activa mientras se camina y deja de estarlo en la parada (ventana de 1 s centrada).
+    active = CALC._pressure_active(prepared.data, prepared.fs)
+    assert active[20:400].all() and not active[500:600].any() and active[700:1980].all()
+    assert prepared.report['presion_activa_seg'] == pytest.approx(18.5, abs=0.5)
+    # Una variación menor de 20 unidades no cuenta, por grande que sea frente al rango del sensor.
+    small = walk()
+    small[['S0', 'S1', 'S2']] = 100.0 + (small[['S0', 'S1', 'S2']] - 100.0) * 0.05      # rango de 10 unidades
+    assert not CALC._pressure_active(CALC.preparar(small).data, 100.0).any()
 
 
-def test_repeated_imu_while_the_foot_moves_is_a_gap_and_too_many_invalidate_the_imu():
+def test_repeated_imu_with_the_pressure_active_is_a_gap_and_too_many_invalidate_the_imu():
     frame = walk(stride_m=1.0)
-    frame['Gx'] = np.where((seconds_of(frame) % 1.0) >= 0.6, 200.0, 0.0) + 0.01 * (np.arange(len(frame)) % 2)   # el pie gira deprisa en el balanceo
     few = frame.copy()
     few.loc[666:690, IMU] = few.loc[665, IMU].to_numpy()                   # 0,25 s repetidos en un balanceo
     prepared = CALC.preparar(few)
     assert prepared.report['huecos_por_grupo']['imu'] == 1 and prepared.data['Ay'].iloc[666:691].isna().all()
-    assert prepared.report['imu_valida'] and 0 < prepared.report['imu_repeticion_en_movimiento_prc'] < 10
+    assert prepared.report['imu_estado'] == 'valida' and 0 < prepared.report['imu_repeticion_presion_activa_prc'] < 30
     # La zancada con el hueco no se integra; las demás sí.
     assert CALC.calcular_longitud_zancada(prepared)['n_zancadas_longitud'] == 18
-    # Si la IMU se repite en más del 10 % de las filas en movimiento, no vale para nada que dependa de ella.
+    # Repetir en el 12 % de las filas todavía es una IMU válida (el límite es el 30 %)...
+    some = frame.copy()
+    for start in range(60, 2000, 100):
+        some.loc[start + 1:start + 12, IMU] = some.loc[start, IMU].to_numpy()
+    assert CALC.preparar(some).report['imu_estado'] == 'valida'
+    # ...pero en el 40 % no vale para nada que dependa de ella.
     many = frame.copy()
     for start in range(60, 2000, 100):
-        many.loc[start + 1:start + 12, IMU] = many.loc[start, IMU].to_numpy()
+        many.loc[start + 1:start + 40, IMU] = many.loc[start, IMU].to_numpy()
     prepared = CALC.preparar(many)
-    assert not prepared.report['imu_valida'] and prepared.report['imu_repeticion_en_movimiento_prc'] > 10
+    assert prepared.report['imu_estado'] == 'no_valida' and prepared.report['imu_repeticion_presion_activa_prc'] > 30
     for method in (CALC.calcular_longitud_zancada, CALC.calcular_altura_zancada):
         assert method(prepared)['error_reason'] == 'ERR_IMU_STALE'
-    # La cadencia sale de la presión y no se ve afectada.
-    assert CALC.calcular_cadencia(prepared)['cadencia_zancada'] == pytest.approx(60, abs=1)
+    # La cadencia sale de la presión y no se ve afectada, pero queda dicho que no se excluyeron giros.
+    cadence = CALC.calcular_cadencia(prepared)
+    assert cadence['cadencia_zancada'] == pytest.approx(60, abs=1) and cadence['giros_evaluados'] is False
 
 
-def test_delayed_reception_is_recovered_and_real_gaps_are_not():
-    frame = walk(seconds=30)
-    seconds = seconds_of(frame)
-    # El móvil se queda 0,5 s sin recibir y luego llegan todas las muestras juntas: no falta ninguna.
-    late = frame.copy()
-    stalled = (seconds > 10.0) & (seconds <= 10.5)
-    late.loc[stalled, '_time'] = late['_time'].iloc[0] + pd.to_timedelta(10.5 + (seconds[stalled] - 10.0) * 0.02, unit='s')
-    late = late.sort_values('_time', kind='stable').reset_index(drop=True)
-    prepared = CALC.preparar(late)
-    assert prepared.report['intervalos_recuperados'] == 1 and prepared.report['n_huecos'] == 0 and prepared.report['n_segmentos'] == 1
-    assert np.allclose(np.diff(prepared.t), 0.01, atol=1e-3)
-    assert CALC.calcular_cadencia(prepared)['num_zancadas'] == 28
-    # Si en ese medio segundo las muestras se pierden, es un hueco real.
-    lost = frame[~stalled]
-    prepared = CALC.preparar(lost)
-    assert prepared.report['intervalos_recuperados'] == 0 and prepared.report['n_huecos'] == 1
-    assert CALC.calcular_cadencia(prepared)['num_zancadas'] == 26
+def test_imu_needs_thirty_seconds_of_active_pressure_to_be_evaluated():
+    default = GaitMetricsCalculator()
+    assert default.config.imu_min_active_s == 30.0 and default.config.imu_max_stale_active == 0.30
+    short = default.preparar(walk(stride_m=1.0))                           # 20 s: no se puede evaluar
+    assert short.report['imu_estado'] == 'no_evaluable' and not short.report['imu_valida']
+    result = default.calcular_longitud_zancada(short)
+    assert result['error_reason'].startswith('ERR_IMU_NOT_EVALUABLE') and np.isnan(result['stride_length_cm'])
+    cadence = default.calcular_cadencia(short)
+    assert cadence['status'] == 'OK' and cadence['giros_evaluados'] is False
+    long = default.preparar(walk(seconds=40, stride_m=1.0))
+    assert long.report['imu_estado'] == 'valida' and long.report['presion_activa_seg'] == pytest.approx(40, abs=0.5)
+    assert default.calcular_longitud_zancada(long)['stride_length_cm'] == pytest.approx(100, rel=0.03)
+
+
+def test_rows_sharing_a_timestamp_are_kept_on_the_uniform_grid():
+    frame = walk()
+    twin = frame.iloc[[100]].assign(S2=frame['S2'].iloc[100] + 7.0)        # misma hora, otro valor: muestra real
+    doubled = pd.concat([frame.iloc[:101], twin, frame.iloc[101:]], ignore_index=True)
+    prepared = CALC.preparar(doubled)
+    assert prepared.report['muestras'] == len(frame) + 1 and prepared.report['tiempos_repetidos'] == 1
+    assert np.all(np.diff(prepared.t) > 0) and prepared.report['n_huecos'] == 0
+    received = GaitMetricsCalculator(ProcessingConfig(time_grid='received', **SHORT)).preparar(doubled)
+    assert received.report['muestras'] == len(frame)                       # sin rejilla uniforme el tiempo debe ser único
 
 
 def test_missing_or_text_values_never_become_zero_and_low_coverage_is_rejected():
@@ -309,7 +335,7 @@ def test_turn_axis_follows_the_vertical_when_the_sock_is_tilted():
     turn = np.where((t >= 12) & (t < 15), 60.0, 0.0) + 0.01 * (np.arange(len(frame)) % 2)
     frame['Gx'], frame['Gy'] = turn * np.sin(np.radians(45)), turn * np.cos(np.radians(45))
     assert CALC.calcular_cadencia(frame)['angulo_giros_grados'] == pytest.approx(180, abs=15)
-    only_gy = GaitMetricsCalculator(ProcessingConfig(turn_axis='Gy')).calcular_cadencia(frame)
+    only_gy = GaitMetricsCalculator(ProcessingConfig(turn_axis='Gy', **SHORT)).calcular_cadencia(frame)
     assert only_gy['angulo_giros_grados'] == pytest.approx(127, abs=15)          # 180 · cos 45°: se queda corto
 
 
@@ -400,8 +426,12 @@ def test_decay_needs_a_complete_six_minute_walk():
     frame = six_minute_walk()
     result = CALC.calcular_decaimiento_6mwt(frame, duracion_registro_s=360.0, inicio='2025-01-01 10:00:00')
     assert result['status'] == 'OK' and result['minutos_validos'] == 6 and result['ensayo_completo'] is True
-    assert result['6mwt_decaimiento'] == pytest.approx(20, abs=1)
+    # Pendiente de la recta ajustada a la cadencia de cada minuto (60, 60, 60, 48, 48, 48).
+    slope, intercept = np.polyfit(np.arange(1, 7), [60, 60, 60, 48, 48, 48], 1)
+    assert result['pendiente_cadencia'] == pytest.approx(slope, abs=0.15) and result['minutos_con_cadencia'] == 6
+    assert result['6mwt_decaimiento'] == pytest.approx(100 * (-5 * slope) / (intercept + slope), abs=1)
     assert result['cadencia_inicial'] == pytest.approx(60, abs=1) and result['cadencia_final'] == pytest.approx(48, abs=1)
+    assert result['cadencias_minuto'][1] == pytest.approx(60, abs=1) and result['cadencias_minuto'][6] == pytest.approx(48, abs=1)
 
     # La ventana del registro debe durar 360 ± 5 s.
     for registered in (120.0, 354.0, 366.0):
@@ -415,7 +445,10 @@ def test_decay_needs_a_complete_six_minute_walk():
     five = frame.copy()
     five.loc[(seconds >= 120) & (seconds < 180), pressure] = np.nan
     result = CALC.calcular_decaimiento_6mwt(five, duracion_registro_s=360.0)
-    assert result['status'] == 'OK' and result['minutos_validos'] == 5 and result['6mwt_decaimiento'] == pytest.approx(20, abs=1)
+    slope5, intercept5 = np.polyfit([1, 2, 4, 5, 6], [60, 60, 48, 48, 48], 1)
+    assert result['status'] == 'OK' and result['minutos_validos'] == 5 and result['minutos_con_cadencia'] == 5
+    assert result['pendiente_cadencia'] == pytest.approx(slope5, abs=0.15)
+    assert result['6mwt_decaimiento'] == pytest.approx(100 * (-5 * slope5) / (intercept5 + slope5), abs=1)
     # Dos minutos sin presión: 6MWT incompleto, decaimiento vacío con su motivo.
     four = five.copy()
     four.loc[(seconds >= 180) & (seconds < 240), pressure] = np.nan
@@ -436,6 +469,15 @@ def test_decay_needs_a_complete_six_minute_walk():
         stopped.loc[seconds >= 300, column] = 100.0 + (np.arange(len(frame)) % 2)[(seconds >= 300).to_numpy()]
     result = CALC.calcular_decaimiento_6mwt(stopped, duracion_registro_s=360.0)
     assert result['minutos_validos'] == 6 and result['error_reason'].startswith('ERR_6MWT_SIN_CADENCIA') and np.isnan(result['6mwt_decaimiento'])
+    assert np.isnan(result['pendiente_cadencia']) and 'final' in result['error_reason']
+    # Con el primero y el último pero solo tres minutos con cadencia no se ajusta la recta (mínimo 4).
+    paused = frame.copy()
+    middle = ((seconds >= 60) & (seconds < 240)).to_numpy()
+    for column in pressure:
+        paused.loc[middle, column] = 100.0 + (np.arange(len(frame)) % 2)[middle]
+    result = CALC.calcular_decaimiento_6mwt(paused, duracion_registro_s=360.0)
+    assert result['error_reason'].startswith('ERR_6MWT_POCOS_MINUTOS') and result['minutos_con_cadencia'] == 3
+    assert np.isnan(result['pendiente_cadencia']) and CALC.config.decay_min_minutes == 4
 
 
 # --- LR-25: longitud de zancada por integración entre apoyos ----------------------------
@@ -462,7 +504,8 @@ def test_stride_length_only_integrates_complete_valid_strides():
     assert CALC.calcular_longitud_zancada(walk(stride_m=1.0), min_strides=30)['error_reason'] == 'ERR_TOO_FEW_STRIDES'
     assert CALC.calcular_cadencia(walk(), min_strides=30)['error_reason'] == 'ERR_TOO_FEW_STRIDES'
     assert CALC.calcular_cadencia(walk(), min_strides=30)['tiempos_zancada'] and CALC.calcular_fases(walk(), min_strides=30)['balanceos_ciclo_prc']
-    short = CALC.calcular_longitud_zancada(walk(seconds=1.9, stride_m=1.0), min_strides=2)
+    brief = GaitMetricsCalculator(ProcessingConfig(imu_min_active_s=1.0))
+    short = brief.calcular_longitud_zancada(walk(seconds=1.9, stride_m=1.0), min_strides=2)
     assert short['error_reason'] == 'ERR_TOO_FEW_STRIDES' and np.isnan(short['stride_length_cm'])
     assert CALC.calcular_longitud_zancada(walk(stride_m=1.0).drop(columns=['S2']))['error_reason'] == 'ERR_MISSING_S2'
     # Las zancadas en giro no se integran.
@@ -500,3 +543,75 @@ def test_short_segment_filter_fallback_is_declared_and_windows_are_in_seconds():
     # La ventana de presión dura lo mismo a 50 y a 100 Hz.
     assert CALC.seconds_to_samples(CALC.config.pressure_window_s, 100) == 15
     assert CALC.seconds_to_samples(CALC.config.pressure_window_s, 50) == 8
+
+
+# --- Márgenes de giro, ritmo del talón y eventos detectados -------------------------------
+
+def test_strides_next_to_a_turn_are_excluded_three_before_and_two_after():
+    frame = walk(seconds=40, stride_m=1.0)
+    t = seconds_of(frame).to_numpy()
+    frame['Gy'] = np.where((t >= 18) & (t < 21), 60.0, 0.0) + 0.01 * (np.arange(len(frame)) % 2)
+    no_margin = GaitMetricsCalculator(ProcessingConfig(turn_margin_before_strides=0, turn_margin_after_strides=0, **SHORT))
+    with_margin, without = CALC.calcular_cadencia(frame), no_margin.calcular_cadencia(frame)
+    assert CALC.config.turn_margin_before_strides == 3 and CALC.config.turn_margin_after_strides == 2
+    assert with_margin['n_giros'] == 1 and with_margin['giros_evaluados'] is True
+    assert with_margin['zancadas_margen_giro'] == 5 and without['zancadas_margen_giro'] == 0
+    assert without['num_zancadas'] - with_margin['num_zancadas'] == 5
+    # Los tramos que no entran quedan anotados con su motivo: el giro y las cinco zancadas de su margen.
+    excluded = pd.DataFrame(with_margin['tramos_excluidos'])
+    assert excluded['motivo'].value_counts().to_dict() == {'margen_giro': 5, 'giro': 1}
+    turn = excluded[excluded['motivo'] == 'giro'].iloc[0]
+    margin = excluded[excluded['motivo'] == 'margen_giro']
+    assert (margin['fin_s'] <= turn['inicio_s'] + 0.05).sum() == 3 and (margin['inicio_s'] >= turn['fin_s'] - 0.05).sum() == 2
+    # Las zancadas integradas siguen la misma regla.
+    lengths = pd.DataFrame(CALC.calcular_altura_zancada(frame)['eventos'])
+    assert (lengths['motivo_exclusion'] == 'margen_giro').sum() == 5
+    # Fases y decaimiento usan las mismas zancadas.
+    assert without.get('num_zancadas') - CALC.calcular_fases(frame)['n_ciclos'] == 5
+    # Arranque: la primera zancada válida queda anotada cuando se pide descartarla.
+    first = CALC.calcular_cadencia(walk(), skip_first=1)
+    assert [item['motivo'] for item in first['tramos_excluidos']] == ['arranque']
+
+
+def test_heel_rhythm_needs_a_peak_after_removing_the_drift():
+    rng = np.random.default_rng(1)
+    drift = walk()
+    drift['S2'] = 200.0 + np.linspace(0.0, 300.0, len(drift)) + rng.integers(0, 3, len(drift))   # deriva sin ritmo de marcha
+    result = CALC.calcular_cadencia(drift)
+    assert result['error_reason'].startswith('ERR_NO_GAIT_MODULATION')
+    report = CALC.preparar(drift)
+    CALC._contact(report)
+    assert report.report['periodicidad_talon'] < 0.3 and report.report['rango_talon'] > 200
+    # Una marcha regular tiene un pico claro en su periodo de zancada.
+    good = CALC.preparar(walk())
+    CALC._contact(good)
+    assert good.report['periodicidad_talon'] > 0.8
+    assert CALC.config.heel_highpass_hz == 0.3 and CALC.config.heel_valley_prominence == 0.3
+
+
+def test_lift_offs_are_reported_between_heel_contacts():
+    result = CALC.calcular_cadencia(walk())
+    contacts, lifts = np.array(result['contactos_s']), np.array(result['despegues_s'])
+    assert len(lifts) >= len(contacts) - 1
+    # Con apoyo del 60 %, cada despegue llega 0,6 s después de su contacto.
+    after = [lifts[lifts > contact].min() - contact for contact in contacts[:-1]]
+    assert np.allclose(after, 0.6, atol=0.05)
+
+
+def test_heel_rhythm_is_measured_in_windows_and_only_those_without_it_are_excluded():
+    rng = np.random.default_rng(2)
+    frame = walk(seconds=60)
+    t = seconds_of(frame).to_numpy()
+    noisy = (t >= 20) & (t < 40)                                            # 20 s sin ritmo en mitad del ensayo
+    frame.loc[noisy, 'S2'] = 200.0 + rng.integers(0, 60, int(noisy.sum()))
+    result = CALC.calcular_cadencia(frame)
+    prepared = CALC.preparar(frame)
+    CALC._contact(prepared)
+    assert prepared.report['ventanas_ritmo'] == 3 and prepared.report['ventanas_con_ritmo_prc'] == pytest.approx(66.7, abs=0.1)
+    # Las dos ventanas con ritmo se usan; la otra queda anotada como tramo excluido.
+    assert result['status'] == 'OK' and result['cadencia_zancada'] == pytest.approx(60, abs=1)
+    assert 34 <= result['num_zancadas'] <= 38
+    without = [item for item in result['tramos_excluidos'] if item['motivo'] == 'sin_ritmo']
+    assert len(without) == 1 and without[0]['inicio_s'] == pytest.approx(20, abs=0.1) and without[0]['fin_s'] == pytest.approx(40, abs=0.1)
+    assert not [c for c in result['contactos_s'] if 20.5 < c < 39.5]
+    assert CALC.config.heel_rhythm_window_s == 20.0

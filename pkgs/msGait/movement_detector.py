@@ -87,13 +87,46 @@ class MovementDetector:
         )
         
         # Load detection parameters from config
-        params = self.data_manager.get_config(sect)
-        self.freq_band = (params["freq_band_min"], params["freq_band_max"])
-        self.min_continuous_hits = params["min_continuous_hits"]
+        self._load_parameters(self.data_manager.get_config(sect), sect)
+
+    def _load_parameters(self, params: dict, sect: str = "movement") -> None:
+        """Reads the detection parameters from the configuration section.
+
+        Args:
+            params (dict): Content of the configuration section.
+            sect (str): Section name, used in error messages.
+
+        Raises:
+            ValueError: If a required parameter is missing or a value is not valid.
+        """
+        params = params or {}
+        for required in ("freq_band_min", "freq_band_max", "min_continuous_seconds"):
+            if required not in params:
+                raise ValueError(f"Falta {sect}.{required} en la configuración.")
+        self.freq_band = (float(params["freq_band_min"]), float(params["freq_band_max"]))
+        # Operational value: shortest sustained activity (seconds) accepted as effective movement.
+        self.min_continuous_seconds = float(params["min_continuous_seconds"])
+        # Pauses shorter than this stay inside an active streak. By default, the longest
+        # period of the analysed band: movement at band frequencies cannot pause longer.
+        self.max_pause_s = float(params.get("max_pause_s", 1.0 / self.freq_band[0]))
+        # Two effective segments are joined only across gaps up to this long (see merge_connected_segments).
+        self.merge_gap_s = float(params.get("merge_gap_s", 10.0))
+        # Relative deviation between measured and nominal sampling rate that triggers a warning.
+        self.fs_tolerance = float(params.get("fs_tolerance", 0.10))
+        # Last, incomplete window: "align" (window ending at the last sample, overlapping the
+        # previous one) or "minimum" (analysed as it is if it has tail_min_samples).
+        self.tail_policy = params.get("tail_policy", "align")
+        self.tail_min_samples = params.get("tail_min_samples")
+        if self.tail_policy not in ("align", "minimum"):
+            raise ValueError(f"{sect}.tail_policy debe ser align o minimum.")
+        if self.tail_policy == "minimum" and self.tail_min_samples is None:
+            raise ValueError(f"{sect}.tail_policy: minimum exige {sect}.tail_min_samples.")
         self.accel_threshold = params.get("accel_threshold", 0.2)
         self.gyro_threshold = params.get("gyro_threshold", 50)
-        self.accel_power_threshold = params.get("accel_power_threshold",0.1)
-        self.gyro_power_threshold = params.get("gyro_power_threshold",1000)
+        # Band power integrated over frequency (PSD x Hz). Defaults are the former
+        # bin-sum thresholds (0.1 and 1000) times the former resolution, 50 Hz / 256.
+        self.accel_power_threshold = params.get("accel_power_threshold", 0.1 * 50 / 256)
+        self.gyro_power_threshold = params.get("gyro_power_threshold", 1000 * 50 / 256)
 
     def close(self):
         """Closing all the opened connections"""
@@ -165,43 +198,105 @@ class MovementDetector:
                 print(i18n._("MVDET-AG-NODAT"))
         return df
 
-    def is_effective_by_welch(self, signal: np.ndarray, power_threshold) -> bool:
+    @staticmethod
+    def _seconds(times) -> np.ndarray:
+        """Converts timestamps to seconds from the first one."""
+        times = pd.to_datetime(pd.Series(np.asarray(times)))
+        return (times - times.iloc[0]).dt.total_seconds().to_numpy() if len(times) else np.array([])
+
+    def estimate_rate(self, times) -> float:
+        """Measures the sampling rate from the timestamps.
+
+        Intervals longer than ``max_pause_s`` are data gaps and are left out, so
+        the result is the number of samples per second of continuous signal.
+
+        Args:
+            times: Sample timestamps (datetime-like), sorted.
+
+        Returns:
+            float: Measured rate in Hz, or ``nan`` if it cannot be measured.
+        """
+        steps = np.diff(self._seconds(times))
+        steps = steps[(steps >= 0) & (steps <= self.max_pause_s)]
+        if len(steps) == 0 or steps.sum() <= 0:
+            return float("nan")
+        return float(len(steps) / steps.sum())
+
+    def is_effective_by_welch(self, signal: np.ndarray, power_threshold, fs: Optional[float] = None) -> bool:
         """Determines if a signal contains sufficient power in a frequency band.
+
+        The band power is the PSD integrated over frequency (sum of the bins
+        times the frequency resolution), so it does not depend on the number of
+        samples per Welch segment.
 
         Args:
             signal (np.ndarray): Input signal array.
+            power_threshold (float): Minimum integrated band power.
+            fs (Optional[float]): Measured sampling rate of this signal; the
+                nominal ``sampling_rate`` is used when it is not given or not finite.
 
         Returns:
-            bool: True if power within the target frequency band exceeds threshold.
+            bool: True if power within the target frequency band reaches the threshold.
         """
-        freqs, power = welch(signal, fs=self.sampling_rate)
-        band_power = power[(freqs >= self.freq_band[0]) & (freqs <= self.freq_band[1])].sum()
-        return band_power >= power_threshold
+        signal = np.asarray(signal, dtype=float)
+        if signal.size < 2:
+            return False
+        rate = fs if fs is not None and np.isfinite(fs) and fs > 0 else self.sampling_rate
+        freqs, power = welch(signal, fs=rate, nperseg=min(256, signal.size))
+        resolution = freqs[1] - freqs[0]
+        band_power = power[(freqs >= self.freq_band[0]) & (freqs <= self.freq_band[1])].sum() * resolution
+        return bool(band_power >= power_threshold)
 
-    def is_effective_by_time(self, signal: np.ndarray, threshold: float) -> bool:
-        """Checks if the signal remains active for a continuous minimum duration.
+    def active_streaks(self, signal: np.ndarray, threshold: float, times=None) -> np.ndarray:
+        """Marks the samples that belong to a sustained active streak.
+
+        A sample is active when ``|signal|`` exceeds the threshold. Consecutive
+        active samples separated by at most ``max_pause_s`` (measured on the
+        timestamps) form one streak, so the dips of an oscillating movement do
+        not break it but a pause or a data gap does. A streak counts only if it
+        lasts at least ``min_continuous_seconds``.
 
         Args:
             signal (np.ndarray): Input signal array.
             threshold (float): Activity threshold.
+            times: Sample timestamps; without them the samples are assumed
+                evenly spaced at the nominal ``sampling_rate``.
 
         Returns:
-            bool: True if signal is continuously active long enough. An empty
-            signal is never effective.
+            np.ndarray: Boolean mask, True from the first to the last active
+            sample of every streak that is long enough.
         """
-        signal = np.asarray(signal)
-        if signal.size == 0:
-            return False
-        std_signal = np.std(signal)
-        if std_signal < 0.01:
-            return False
-        active = np.abs(signal) > threshold
-        consecutive = np.diff(
-            np.where(
-                np.concatenate(([active[0]], active[:-1] != active[1:], [True]))
-            )[0]
-        )[::2]
-        return (len(consecutive) >= self.min_continuous_hits)
+        signal = np.asarray(signal, dtype=float)
+        mask = np.zeros(signal.size, dtype=bool)
+        if signal.size == 0 or np.std(signal) < 0.01:
+            return mask
+        seconds = np.arange(signal.size) / self.sampling_rate if times is None else self._seconds(times)
+        active = np.flatnonzero(np.abs(signal) > threshold)
+        if active.size == 0:
+            return mask
+        breaks = np.flatnonzero(np.diff(seconds[active]) > self.max_pause_s) + 1
+        for streak in np.split(active, breaks):
+            if seconds[streak[-1]] - seconds[streak[0]] >= self.min_continuous_seconds:
+                mask[streak[0]:streak[-1] + 1] = True
+        return mask
+
+    def is_effective_by_time(self, signal: np.ndarray, threshold: float, times=None) -> bool:
+        """Checks if the signal stays active for a continuous minimum duration.
+
+        What is measured is the duration of the active streak in seconds
+        (``min_continuous_seconds``), not the number of streaks; see
+        :meth:`active_streaks`.
+
+        Args:
+            signal (np.ndarray): Input signal array.
+            threshold (float): Activity threshold.
+            times: Sample timestamps; without them the nominal rate is assumed.
+
+        Returns:
+            bool: True if some active streak is long enough. An empty signal is
+            never effective.
+        """
+        return bool(self.active_streaks(signal, threshold, times).any())
 
     def per_sample_activity_mask(self, signal: np.ndarray, threshold: float) -> np.ndarray:
         """Returns a boolean mask where signal values exceed the threshold.
@@ -250,19 +345,38 @@ class MovementDetector:
             segments = []
             total_rows = len(df)
 
-            for i in range(0, total_rows - window_size + 1, window_size):
-                start_time = df.loc[i, "_time"]
-                end_time = df.loc[i + window_size - 1, "_time"]
-                segments.append((start_time, end_time))
+            starts = list(range(0, total_rows - window_size + 1, window_size))
+            sizes = [window_size] * len(starts)
+            covered = len(starts) * window_size
+            tail = total_rows - covered
+            if tail > 0:
+                # The final stretch is not discarded.
+                if self.tail_policy == "align" and total_rows >= window_size:
+                    starts.append(total_rows - window_size)
+                    sizes.append(window_size)
+                elif self.tail_policy == "minimum" and tail >= int(self.tail_min_samples):
+                    starts.append(covered)
+                    sizes.append(tail)
+            for i, size in zip(starts, sizes):
+                segments.append((df.loc[i, "_time"], df.loc[i + size - 1, "_time"]))
 
             return segments
 
         def merge_connected_segments(segments: list[tuple[pd.Timestamp, pd.Timestamp]], 
-                                     max_gap_sec=5.):
+                                     times: np.ndarray, moving: np.ndarray, max_gap_sec=5.):
             """Merges temporally close segments into a single one.
+
+            Two segments are joined only if the gap between them is at most
+            ``max_gap_sec`` and what lies in the gap is known to be movement:
+            the gap has data all along (no interval between samples longer
+            than ``max_pause_s``) and every sample in it belongs to a sustained
+            active streak. A gap without data, or with inactive data, is never
+            labelled as movement.
 
             Args:
                 segments (List[Tuple[pd.Timestamp, pd.Timestamp]]): List of segment start and end times.
+                times (np.ndarray): Sorted sample timestamps of the series.
+                moving (np.ndarray): Per-sample mask of sustained activity.
                 max_gap_sec (float): Maximum allowed gap for merging segments.
 
             Returns:
@@ -271,13 +385,25 @@ class MovementDetector:
             if not segments:
                 return []
 
+            def can_merge(previous_end, start) -> bool:
+                gap = (start - previous_end).total_seconds()
+                if gap <= 0:
+                    return True          # overlapping windows (aligned tail)
+                if gap > max_gap_sec:
+                    return False
+                first = int(np.searchsorted(times, np.datetime64(previous_end), side="left"))
+                last = int(np.searchsorted(times, np.datetime64(start), side="right"))
+                steps = np.diff(times[first:last]) / np.timedelta64(1, "s")
+                if len(steps) == 0 or steps.max() > self.max_pause_s:
+                    return False         # no data in the gap
+                return bool(moving[first + 1:last - 1].all())
+
             segments = sorted(segments, key=lambda x: x[0])
             merged = []
             current_start, current_end = segments[0]
 
             for start, end in segments[1:]:
-                gap = (start - current_end).total_seconds()
-                if gap <= max_gap_sec:
+                if can_merge(current_end, start):
                     current_end = max(current_end, end)
                 else:
                     merged.append((current_start, current_end))
@@ -353,16 +479,27 @@ class MovementDetector:
             if "|a|" not in sensor_data.columns or "|g|" not in sensor_data.columns:
                 continue
 
-            sensor_data = sensor_data.sort_values("_time").reset_index(drop=True)
-            acc = sensor_data["|a|"].to_numpy()
-            gyro = sensor_data["|g|"].to_numpy()
-
-            # We need 256 samples per window for Welch’s method
-            segments = segment_fixed_windows(sensor_data, 256)
             # Asegurar que _time sea datetime y sin zona horaria para la comparación
             sensor_data["_time"] = pd.to_datetime(sensor_data["_time"]).dt.tz_localize(None)
             sensor_data = sensor_data.sort_values("_time").reset_index(drop=True)
-            
+            acc = sensor_data["|a|"].to_numpy()
+            gyro = sensor_data["|g|"].to_numpy()
+            times = sensor_data["_time"].to_numpy()
+
+            # The sampling rate depends on the sock: it is measured, not assumed.
+            measured = self.estimate_rate(times)
+            if np.isfinite(measured) and abs(measured - self.sampling_rate) / self.sampling_rate > self.fs_tolerance:
+                if self.verbose >= 1 or vb >= 1:
+                    print(i18n._("MVNT-FS-DEV: {cid} ({foot}): frecuencia medida {fs:.1f} Hz, nominal {nom:g} Hz; "
+                                 "el análisis usa la medida").format(cid=cid, foot=foot, fs=measured, nom=self.sampling_rate))
+
+            # Sustained activity is measured on the whole series, in real seconds.
+            acc_moving = self.active_streaks(acc - 1, self.accel_threshold, times)
+            gyro_moving = self.active_streaks(gyro, self.gyro_threshold, times)
+
+            # We need 256 samples per window for Welch’s method
+            segments = segment_fixed_windows(sensor_data, 256)
+
             for seg_start, seg_end in segments:
                 s_start = pd.to_datetime(seg_start).tz_localize(None)
                 s_end = pd.to_datetime(seg_end).tz_localize(None)
@@ -376,15 +513,19 @@ class MovementDetector:
                 acc_seg = seg_data["|a|"].to_numpy()
                 gyro_seg = seg_data["|g|"].to_numpy()
 
-                acc_ok = self.is_effective_by_welch(acc_seg,self.accel_power_threshold) and \
-                         self.is_effective_by_time(acc_seg-1, self.accel_threshold)
-                gyro_ok = self.is_effective_by_welch(gyro_seg, self.gyro_power_threshold) and \
-                          self.is_effective_by_time(gyro_seg, self.gyro_threshold)
+                inside = seg_data.index.to_numpy()
+                fs_seg = self.estimate_rate(seg_data["_time"].to_numpy())
+
+                acc_ok = self.is_effective_by_welch(acc_seg, self.accel_power_threshold, fs_seg) and \
+                         bool(acc_moving[inside].any())
+                gyro_ok = self.is_effective_by_welch(gyro_seg, self.gyro_power_threshold, fs_seg) and \
+                          bool(gyro_moving[inside].any())
 
                 if acc_ok or gyro_ok:
                     valid_segments.append((seg_start, seg_end))
 
-            merged_segments = merge_connected_segments(valid_segments, max_gap_sec=10)
+            merged_segments = merge_connected_segments(
+                valid_segments, times, acc_moving | gyro_moving, max_gap_sec=self.merge_gap_s)
             for mstart, mend in merged_segments:
                 results.append({
                     "codeid_id": codeid_id,

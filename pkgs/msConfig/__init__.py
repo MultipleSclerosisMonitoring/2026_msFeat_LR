@@ -252,6 +252,8 @@ def _validate_analysis(config: dict, path: Path) -> None:
     paths.setdefault('output_folder', str(PROJECT_ROOT / 'data' / 'raw'))
     paths.setdefault('h5_path', str(Path(paths['output_folder']) / 'gait_study_data.h5'))
     paths.setdefault('output_dataset', str(PROJECT_ROOT / 'DatasetMaestro.xlsx'))
+    # Detected events live apart from the raw signals: <store folder>/../results.
+    paths.setdefault('results_folder', str(Path(paths['h5_path']).parent.parent / 'results'))
     # An output must never overwrite the input registry or another output.
     targets = {key: os.path.normcase(paths[key]) for key in ('registry_csv', 'h5_path', 'output_dataset', 'output_report') if key in paths}
     names = list(targets)
@@ -286,7 +288,14 @@ def _validate_analysis(config: dict, path: Path) -> None:
         high = _number(movement, 'freq_band_max', 'movement')
         if low is not None and high is not None and low >= high:
             raise ConfigError('movement.freq_band_min debe ser menor que movement.freq_band_max.')
-        for key in ('accel_threshold', 'gyro_threshold', 'accel_power_threshold', 'gyro_power_threshold'):
+        for key in ('accel_threshold', 'gyro_threshold', 'accel_power_threshold', 'gyro_power_threshold',
+                    'min_continuous_seconds', 'max_pause_s', 'merge_gap_s', 'fs_tolerance'):
             _number(movement, key, 'movement')
+        if movement.get('tail_policy', 'align') not in ('align', 'minimum'):
+            raise ConfigError('movement.tail_policy debe ser align o minimum.')
+        if 'tail_min_samples' in movement:
+            _positive_int(movement, 'tail_min_samples', 'movement', 1)
+        elif movement.get('tail_policy') == 'minimum':
+            raise ConfigError('movement.tail_policy: minimum exige movement.tail_min_samples.')
         if 'min_continuous_hits' in movement:
             _positive_int(movement, 'min_continuous_hits', 'movement', 1)

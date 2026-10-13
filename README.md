@@ -24,12 +24,12 @@ This project focuses on the automated acquisition and processing of high-frequen
 │   └── README.md            # Technical documentation for the module
 ├── pipeline_test.py, graficas_tfg.py, GaitMetricsCalculator.py   # Launchers kept under their historical names
 ├── benchmarks/              # Time/memory benchmark per event
-├── scripts/                 # One-off tools (migration of the old HDF5 file)
+├── scripts/                 # Tools: translations, review of reference trials, migration of the old HDF5 file
 ├── dudas/ + DUDAS.pdf       # Open questions for the supervisor (source and PDF)
 ├── tests/                   # Offline tests
 ├── config/                  # YAML configuration and guide
 ├── data/                    # Data storage
-├── InfluxDBms/              # Database connection credentials (YAML)
+├── InfluxDBms/              # Legacy connection YAML (references to .env variables, no credentials)
 ├── pyproject.toml           # Project metadata, dependency ranges, commands and licence
 ├── poetry.lock              # Exact versions the tests ran with
 ├── .github/workflows/       # Tests on Python 3.11, 3.12 and 3.13 from a clean install
@@ -40,7 +40,7 @@ This project focuses on the automated acquisition and processing of high-frequen
 
 **Dentro del TFG:** el paquete `src/gait_analysis/` (con `pipeline.py`, `metrics.py` y `plots.py`), sus lanzadores de la raíz, `benchmarks/`, `scripts/`, `tests/` y, de `pkgs/`, la parte compartida: `msConfig` (`load_config`, `ConfigError`), `msTools.i18n`, `msTools.timeutils` y `msTools.flux`.
 
-**Fuera del TFG (código heredado, se conserva sin mantener):** `pkgs/api.py`, `pkgs/msGait`, `pkgs/msCodeID`, `pkgs/ms_monitoring`, `pkgs/msTools/data_manager.py`, `create_tables.sql`, `pkgs/msgait.service`, `consulta_influxdb.py` e `InfluxDBms/`. No hay base PostgreSQL de pruebas en el repositorio, y el servicio `msgait.service` no usa este repositorio. Lo corregido en ese código solo está probado con simulaciones. Su tratamiento de la hora puede desfasarse 1-2 h entre lo que guarda y lo que busca; se deduce del código y no se ha comprobado con datos.
+**Fuera del TFG (código heredado, se conserva sin mantener):** `pkgs/api.py`, `pkgs/msGait`, `pkgs/msCodeID`, `pkgs/ms_monitoring`, `pkgs/msTools/data_manager.py`, `create_tables.sql`, `pkgs/msgait.service` e `InfluxDBms/`. `consulta_influxdb.py`, `InfluxDBms/cInfluxDB.py` y `pkgs/config.yaml` se retiraron del repositorio: nada los usaba. No hay base PostgreSQL de pruebas en el repositorio. El servicio `msgait.service` es del despliegue del tutor: apunta a otro repositorio (DPC_2024) y a otro entorno, y se conserva tal cual. Lo corregido en ese código solo está probado con simulaciones. Su tratamiento de la hora puede desfasarse 1-2 h entre lo que guarda y lo que busca; se deduce del código y no se ha comprobado con datos.
 
 # Instalación y ejecución
 
@@ -67,7 +67,7 @@ El proyecto es un paquete de Python: `pipeline`, `metrics` y `plots` están dent
 
 Versiones de Python: 3.11 a 3.13. `.github/workflows/tests.yml` instala el proyecto desde cero y pasa los tests con las tres en cada subida a GitHub. En local solo se ha probado con 3.13 en Windows.
 
-Licencia: AGPL-3.0-or-later (`LICENSE`).
+Licencia: AGPL-3.0-or-later (GNU Affero GPL) para todo el repositorio, incluido el código heredado de `pkgs/` (`LICENSE` y `pkgs/LICENSE` son el mismo texto).
 
 La configuración usa YAML para parámetros/rutas y `.env` para credenciales.
 En una instalación nueva:
@@ -90,3 +90,22 @@ poetry run msfeat-graficas
 ```
 
 [Guía completa de configuración, precedencia, rutas y pruebas](config/README.md).
+
+# Limitaciones declaradas
+
+**Métricas del TFG, sin validar con una referencia.** No hay eventos anotados, distancias medidas ni otro dispositivo con el que comparar; la comprobación disponible es visual (Grafana) y de coherencia interna. En concreto:
+
+- **Giros (LR-18).** Se detectan por ángulo acumulado en torno a la vertical estimada. Los umbrales (25 y 10 grados/s, 90 grados) no están calibrados con giros etiquetados.
+- **Zancadas y cadencia (LR-19, LR-20).** La cadencia es de zancada, por pie, a partir del contacto de talón por presión. No se ha comprobado con anotaciones que cada contacto detectado sea un apoyo real.
+- **Polaridad de la presión (LR-22).** La presión sube cuando se pisa y el valor guardado baja; la lectura es relativa, no una presión absoluta, y por eso cada sensor se compara con su propio rango. No hay calibración física por hardware.
+- **Longitud de zancada (LR-25).** Integración entre pies planos, sin constante que calibrar. No hay distancia de referencia (tampoco anotada en los 6MWT) ni error de estimación. En el T25FW se avisa si la suma de longitudes de un intento no es coherente con los 7,62 m de la prueba (`WARN_T25FW_DISTANCE`, columnas `t25fw_suma_longitudes_m` y `t25fw_distancia_coherente`); es un aviso, no una validación ni una calibración.
+- **Excursión del tobillo y MTC (LR-26).** La excursión no tiene señal de referencia; la MTC no se calcula.
+- **Línea del 10 % en la figura de asimetría (LR-38).** Es una referencia visual sin significado clínico acreditado; su justificación queda para la memoria.
+
+**Código heredado, limitaciones que se dejan sin corregir** (no hay PostgreSQL de pruebas y cambiarlo sin datos reales puede alterar lo que hace hoy):
+
+- **Hora (LR-47).** Conviven contratos distintos: hora de reloj etiquetada como UTC al leer de InfluxDB y UTC real en `ensure_utc()`. Puede haber un desfase de 1-2 h entre lo que se guarda y lo que se busca.
+- **API (LR-52).** Las conexiones y el detector se comparten entre peticiones, el arranque usa la hora UTC sin zona y una frecuencia nominal de 50 Hz. No se ha probado con carga ni concurrencia.
+- **Servicio (LR-61).** `pkgs/msgait.service` no despliega este repositorio. El flujo de GitHub Actions está escrito pero no se ha ejecutado todavía.
+
+El detalle de lo corregido en el código heredado está en [config/README.md](config/README.md).

@@ -13,7 +13,7 @@ import pandas as pd
 import seaborn as sns
 from scipy.stats import spearmanr
 
-from gait_analysis.metrics import REPORT_METRICS, SYMMETRY_METRIC
+from gait_analysis.metrics import METRIC_STATE, REPORT_METRICS, SYMMETRY_METRIC
 from gait_analysis.logging_utils import configure_logging
 from msConfig import PROJECT_ROOT, ConfigError, load_config
 from msTools import i18n
@@ -239,7 +239,13 @@ class GaitVisualizer:
         logger.debug(_("DEBUG_PLOT_SAVED: {f}").format(f=out_file))
 
     def plot_dynamic_boxplots(self) -> None:
-        """Genera Boxplots dinámicos agrupando métricas por tipo (ej. cadencia, zancada)."""
+        """Genera Boxplots dinámicos agrupando métricas por tipo (ej. cadencia, zancada).
+
+        Sobre cada caja se dibuja el valor de cada paciente: relleno si todos
+        sus ensayos tienen esa métrica en OK y hueco si alguno la tiene en
+        WARNING (columna ``{test}_{pie}_estado_{grupo}_n_warning``). Los
+        WARNING entran siempre.
+        """
         if self.df is None or self.df.empty:
             return
 
@@ -248,7 +254,8 @@ class GaitVisualizer:
             "Cadencia": "cadencia_zancada",
             "Longitud_Zancada_cm": "stride_length_cm",
             "Excursion_Tobillo_cm": "excursion_tobillo_cm",
-            "Fase_Apoyo_Pct": "apoyo_prc"
+            "Fase_Apoyo_Pct": "apoyo_prc",
+            "Pendiente_Cadencia": "pendiente_cadencia",
         }
 
         out_subfolder = os.path.join(self.out_dir, "boxplots")
@@ -266,13 +273,25 @@ class GaitVisualizer:
 
             plt.figure(figsize=(10, 6))
             data = self.df[cols_metrica].rename(columns={c: f"{c[:-len(sufijo) - 1]}\n(n={counts[c]})" for c in cols_metrica})
-            sns.boxplot(data=data, width=0.6)
+            sns.boxplot(data=data, width=0.6, color="#dfe7ee", showfliers=False)
+            rng = np.random.default_rng(0)
+            warned_total = 0
+            for position, column in enumerate(cols_metrica):
+                values = self.df[column]
+                flag = f"{column[:-len(sufijo)]}{METRIC_STATE[sufijo]}_n_warning"
+                warned = (pd.to_numeric(self.df[flag], errors="coerce").fillna(0) > 0) if flag in self.df.columns else pd.Series(False, index=self.df.index)
+                for mask, style in ((values.notna() & ~warned, {"color": "#1f77b4"}),
+                                    (values.notna() & warned, {"facecolors": "none", "edgecolors": "#1f77b4", "linewidths": 1.1})):
+                    x = position + rng.uniform(-0.12, 0.12, int(mask.sum()))
+                    plt.scatter(x, values[mask], s=22, alpha=0.8, zorder=3, **style)
+                warned_total += int((values.notna() & warned).sum())
             plt.title(_("Distribución de {t} entre Pruebas Clínicas").format(t=titulo))
             plt.ylabel(titulo.replace("_", " "))
             plt.xticks(rotation=45, ha='right')
 
             out_file = os.path.join(out_subfolder, f"boxplot_{titulo.lower()}.png")
-            self._save(out_file, f"Un valor por paciente (media de sus ensayos con valor). Columnas con n >= {MIN_N_DESCRIPTIVE}.")
+            self._save(out_file, f"Un valor por paciente (media de sus ensayos con valor). Columnas con n >= {MIN_N_DESCRIPTIVE}. "
+                                 f"Punto hueco: algún ensayo del paciente con esta métrica en WARNING ({warned_total} valores).")
 
     def plot_dynamic_kde_asymmetry(self) -> None:
         """Genera histogramas KDE del índice de simetría sobre todo su rango válido.

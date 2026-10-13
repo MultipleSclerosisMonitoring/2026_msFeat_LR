@@ -121,4 +121,4 @@ EOF
 
 ## License
 
-MIT License. See [LICENSE](../LICENSE) for details.
+GNU Affero General Public License v3.0 or later. See [LICENSE](../LICENSE) for details.

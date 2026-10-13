@@ -25,12 +25,16 @@ class FootSeries:
 
     Attributes:
         side (str): ``Left``, ``Right`` o ``Unknown``.
-        frame (pd.DataFrame): Muestras ordenadas por ``_time`` y sin duplicados.
-        device (str): Dispositivo seleccionado (cadena vacía si no hay etiqueta).
+        frame (pd.DataFrame): Muestras ordenadas por ``_time`` y sin filas idénticas.
+        device (str): Dispositivos usados, en orden de tiempo (cadena vacía si
+            no hay etiqueta).
         devices_found (dict[str, int]): Muestras recibidas por dispositivo.
-        rows_received (int): Muestras del pie antes de seleccionar y deduplicar.
+        rows_received (int): Muestras del pie antes de deduplicar.
         exact_duplicates (int): Filas idénticas eliminadas.
-        time_conflicts (int): Filas eliminadas por repetir ``_time`` con otros valores.
+        time_conflicts (int): Filas que repiten ``_time`` con otros valores; se
+            conservan (son muestras reales recibidas a la vez).
+        overlap_dropped (int): Filas descartadas donde dos dispositivos se
+            solapan en el tiempo.
         was_sorted (bool): Si las muestras llegaron ya ordenadas por tiempo.
     """
     side: str
@@ -40,6 +44,7 @@ class FootSeries:
     rows_received: int = 0
     exact_duplicates: int = 0
     time_conflicts: int = 0
+    overlap_dropped: int = 0
     was_sorted: bool = True
 
     def report(self) -> dict[str, Any]:
@@ -51,7 +56,7 @@ class FootSeries:
         return {
             "rows": len(self.frame), "rows_received": self.rows_received, "device": self.device,
             "devices_found": self.devices_found, "exact_duplicates": self.exact_duplicates,
-            "time_conflicts": self.time_conflicts, "was_sorted": self.was_sorted,
+            "time_conflicts": self.time_conflicts, "overlap_dropped": self.overlap_dropped, "was_sorted": self.was_sorted,
         }
 
 
@@ -145,7 +150,15 @@ def fetch_trial_frame(client: Any, bucket: str, measurement: str, trial: Trial) 
 
 
 def _normalize_series(side: str, frame: pd.DataFrame, trial_id: str) -> FootSeries:
-    """Selecciona dispositivo, ordena y deduplica las muestras de un pie."""
+    """Une los dispositivos de un pie, ordena y quita las filas idénticas.
+
+    Un pie puede tener más de un dispositivo en un ensayo: si se agota una
+    batería se cambia el calcetín, así que en cada instante hay un único
+    registro y los tramos de todos los dispositivos se unen por tiempo. Si dos
+    dispositivos se solapan, en el tramo común se conserva el que tiene más
+    muestras en él. Dos filas con la misma marca de tiempo y valores distintos
+    se conservan las dos: la marca es la de recepción y son muestras reales.
+    """
     series = FootSeries(side, frame, rows_received=len(frame))
     # Identidad del dispositivo: la primera etiqueta disponible que tenga valores.
     labels = {
@@ -156,31 +169,46 @@ def _normalize_series(side: str, frame: pd.DataFrame, trial_id: str) -> FootSeri
     if devices is not None:
         counts = devices.value_counts()
         series.devices_found = {str(name): int(n) for name, n in counts.items()}
-        # Regla explícita: el dispositivo con más muestras; a igualdad, el primero alfabéticamente.
-        series.device = sorted(counts.index, key=lambda name: (-counts[name], name))[0]
+        spans = frame.groupby(devices)["_time"].agg(["min", "max"]).sort_values("min")
+        series.device = ", ".join(str(name) for name in spans.index)
         if len(counts) > 1:
-            logger.warning(
-                _("WARN_MULTIPLE_DEVICES: Evento {0} ({1}) con {2} dispositivos {3}; se conserva '{4}'").format(trial_id, side, len(counts), series.devices_found, series.device)
+            keep = pd.Series(True, index=frame.index)
+            names = list(spans.index)
+            for position, first in enumerate(names):
+                for second in names[position + 1:]:
+                    start, stop = max(spans.at[first, "min"], spans.at[second, "min"]), min(spans.at[first, "max"], spans.at[second, "max"])
+                    if start > stop:
+                        continue
+                    inside = (frame["_time"] >= start) & (frame["_time"] <= stop) & keep
+                    in_first, in_second = int((inside & (devices == first)).sum()), int((inside & (devices == second)).sum())
+                    loser = second if in_first >= in_second else first    # a igualdad, se conserva el que empezó antes
+                    dropped = inside & (devices == loser)
+                    keep &= ~dropped
+                    series.overlap_dropped += int(dropped.sum())
+                    logger.warning(
+                        _("WARN_DEVICES_OVERLAP: Evento {0} ({1}): los dispositivos '{2}' y '{3}' se solapan entre {4} y {5}; en ese tramo se descartan {6} filas de '{7}'").format(
+                            trial_id, side, first, second, start, stop, int(dropped.sum()), loser)
+                    )
+            frame = frame[keep]
+            logger.info(
+                _("INFO_MULTIPLE_DEVICES: Evento {0} ({1}) con {2} dispositivos {3}; sus tramos se unen por tiempo").format(trial_id, side, len(counts), series.devices_found)
             )
-            frame = frame[devices == series.device]
 
     series.was_sorted = bool(frame["_time"].is_monotonic_increasing)
     frame = frame.sort_values("_time", kind="stable")
     exact = frame.duplicated(keep="first")
     series.exact_duplicates = int(exact.sum())
-    frame = frame[~exact]
-    conflicts = frame.duplicated(subset="_time", keep="first")
-    series.time_conflicts = int(conflicts.sum())
-    frame = frame[~conflicts].reset_index(drop=True)
+    frame = frame[~exact].reset_index(drop=True)
+    series.time_conflicts = int(frame.duplicated(subset="_time", keep="first").sum())
 
     if series.exact_duplicates or series.time_conflicts:
-        logger.warning(
-            _("WARN_DUPLICATE_SAMPLES: Evento {0} ({1}): eliminadas {2} filas idénticas y {3} con _time repetido y valores distintos (se conserva la primera)").format(trial_id, side, series.exact_duplicates, series.time_conflicts)
+        logger.info(
+            _("INFO_DUPLICATE_SAMPLES: Evento {0} ({1}): eliminadas {2} filas idénticas; {3} filas repiten _time con valores distintos y se conservan").format(trial_id, side, series.exact_duplicates, series.time_conflicts)
         )
     if not series.was_sorted:
         logger.debug(_("DEBUG_SERIES_SORTED: Evento {0} ({1}) llegó desordenado y se ordenó por _time").format(trial_id, side))
-    if not (frame["_time"].is_monotonic_increasing and frame["_time"].is_unique):
-        raise ValueError(_("La serie {0} del evento {1} no es estrictamente creciente en _time").format(side, trial_id))
+    if not frame["_time"].is_monotonic_increasing:
+        raise ValueError(_("La serie {0} del evento {1} no es creciente en _time").format(side, trial_id))
     series.frame = frame
     return series
 
@@ -188,8 +216,8 @@ def _normalize_series(side: str, frame: pd.DataFrame, trial_id: str) -> FootSeri
 def split_series(df: pd.DataFrame, trial_id: str = "") -> dict[str, FootSeries]:
     """Separa las señales de un evento en una serie física por pie.
 
-    Dentro de cada pie valida la cardinalidad de dispositivo (conserva el que
-    tiene más muestras), ordena por ``_time`` y elimina duplicados temporales.
+    Dentro de cada pie une los tramos de sus dispositivos, ordena por
+    ``_time`` y elimina las filas idénticas.
 
     Args:
         df (pd.DataFrame): Señales normalizadas de un evento.
@@ -200,7 +228,7 @@ def split_series(df: pd.DataFrame, trial_id: str = "") -> dict[str, FootSeries]:
         serie ``Unknown``.
 
     Raises:
-        ValueError: Si una serie no queda estrictamente creciente en ``_time``.
+        ValueError: Si una serie no queda creciente en ``_time``.
     """
     if df.empty:
         return {}
