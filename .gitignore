@@ -225,3 +225,17 @@ DUDAS.pdf
 
 # Instrucciones locales para Claude
 CLAUDE.md
+
+# Auxiliares de la compilación de LaTeX y plantilla del informe
+informe/*.aux
+informe/*.loc
+informe/*.lof
+informe/*.loi
+informe/*.lot
+informe/*.out
+informe/*.toc
+informe/*.log
+informe/*.synctex.gz
+informe/*.fls
+informe/*.fdb_latexmk
+informe/tfg_modelo.pdf
