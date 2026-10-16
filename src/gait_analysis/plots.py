@@ -130,7 +130,9 @@ class GaitVisualizer:
     """Clase encargada de la generación automatizada y dinámica de gráficos.
 
     Lee el Excel del pipeline y genera visualizaciones exploratorias (300 dpi).
-    Cada figura lleva al pie su procedencia y su tamaño de muestra.
+    Por defecto cada figura lleva al pie su procedencia y su tamaño de muestra;
+    para la memoria del TFG se pueden generar sin ese pie, porque allí esa
+    información va en el texto y en el pie de la figura.
 
     Attributes:
         data_path (str): Ruta al archivo Excel maestro.
@@ -139,9 +141,12 @@ class GaitVisualizer:
         trials (pd.DataFrame): Tabla por ensayo y pie, con estados.
         tests (List[str]): Códigos de test presentes.
         provenance (Dict[str, str]): Procedencia del Excel (fecha, commit, huellas).
+        provenance_footer (bool): Si se escribe al pie de cada figura su
+            tamaño de muestra y su procedencia.
     """
 
-    def __init__(self, data_path: Optional[str] = None, out_dir: Optional[str] = None, config_path: Optional[str] = None) -> None:
+    def __init__(self, data_path: Optional[str] = None, out_dir: Optional[str] = None, config_path: Optional[str] = None,
+                 provenance_footer: bool = True) -> None:
         """Inicializa el visualizador y prepara el entorno gráfico.
 
         Args:
@@ -151,6 +156,8 @@ class GaitVisualizer:
                 ``resultados_graficos`` en la raíz del proyecto.
             config_path (str, optional): YAML de configuración; solo se usa si
                 no se indica ``data_path``.
+            provenance_footer (bool): ``False`` genera las figuras sin el pie de
+                tamaño de muestra y procedencia (figuras para la memoria).
 
         Raises:
             ConfigError: Si hace falta la configuración y no es válida.
@@ -168,6 +175,7 @@ class GaitVisualizer:
         self.trials: Optional[pd.DataFrame] = None
         self.tests: List[str] = []
         self.provenance: Dict[str, str] = {}
+        self.provenance_footer = provenance_footer
 
         i18n.init_translation(config["project"]["language"])
         sns.set_theme(style="whitegrid", palette="muted")
@@ -220,18 +228,24 @@ class GaitVisualizer:
         return [c for c in self.df.columns if c.startswith(f"{test}_") and c.endswith(suffixes)]
 
     def _save(self, out_file: str, note: str) -> None:
-        """Añade el pie de procedencia, guarda la figura actual y la cierra.
+        """Añade el pie de procedencia (si está activado), guarda la figura actual y la cierra.
 
         Args:
             out_file (str): Ruta del PNG.
             note (str): Tamaño de muestra y criterio de inclusión de la figura.
         """
+        figure = plt.gcf()
+        if not self.provenance_footer:
+            figure.tight_layout()
+            figure.savefig(out_file, dpi=300)
+            plt.close(figure)
+            logger.debug(_("DEBUG_PLOT_SAVED: {f}").format(f=out_file))
+            return
         dirty = " (con cambios sin commit)" if self.provenance.get("cambios_sin_commit") == "True" else ""
         origin = (
             f"Origen: {os.path.basename(self.data_path)} · generado {self.provenance.get('generado', '?')} · "
             f"commit {self.provenance.get('commit_git', '?')[:10]}{dirty} · config {self.provenance.get('huella_config_processing', '?')}"
         )
-        figure = plt.gcf()
         figure.tight_layout(rect=(0, 0.05, 1, 1))
         figure.text(0.01, 0.012, f"{note}\n{origin}", fontsize=6.5, color="#52606d", ha="left", va="bottom")
         figure.savefig(out_file, dpi=300)
@@ -455,10 +469,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--data', default=None, help='Excel de entrada; por defecto paths.output_dataset')
     parser.add_argument('--out', default=None, help='Carpeta de salida; por defecto resultados_graficos')
     parser.add_argument('--verbose', type=int, choices=(0, 1, 2), default=1, help='0 avisos, 1 información, 2 depuración')
+    parser.add_argument('--sin-procedencia', action='store_true',
+                        help='Sin el pie de tamaño de muestra y procedencia (figuras para la memoria)')
     args = parser.parse_args(argv)
     configure_logging(args.verbose)
     try:
-        visualizer = GaitVisualizer(args.data, args.out, args.config)
+        visualizer = GaitVisualizer(args.data, args.out, args.config, provenance_footer=not args.sin_procedencia)
     except ConfigError as error:
         sys.exit(str(error))
     visualizer.generate_all_reports()

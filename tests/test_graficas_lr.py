@@ -98,6 +98,19 @@ def test_figures_and_correlation_table_are_generated(tmp_path, caplog):
     assert 'DEBUG_CORRELATION_PAIRS' in caplog.text
 
 
+@pytest.mark.parametrize('footer', [True, False])
+def test_provenance_footer_can_be_omitted_for_the_report(tmp_path, monkeypatch, footer):
+    from matplotlib.figure import Figure
+    texts = []
+    original = Figure.text
+    monkeypatch.setattr(Figure, 'text', lambda self, x, y, s, *a, **k: texts.append(str(s)) or original(self, x, y, s, *a, **k))
+    out = tmp_path / 'figuras'
+    GaitVisualizer(str(write_book(tmp_path / 'dataset.xlsx')), str(out), provenance_footer=footer).generate_all_reports()
+
+    assert (out / 'boxplots/boxplot_cadencia.png').stat().st_size > 10_000
+    assert any('Origen:' in text for text in texts) is footer
+
+
 def test_old_format_workbook_is_rejected_with_a_clear_message(tmp_path, caplog):
     path = write_book(tmp_path / 'viejo.xlsx', sheets=('Datos_Pacientes',))
     visualizer = GaitVisualizer(str(path), str(tmp_path / 'figuras'))

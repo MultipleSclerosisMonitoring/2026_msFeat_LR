@@ -106,6 +106,6 @@ poetry run msfeat-graficas
 
 - **Hora (LR-47).** Conviven contratos distintos: hora de reloj etiquetada como UTC al leer de InfluxDB y UTC real en `ensure_utc()`. Puede haber un desfase de 1-2 h entre lo que se guarda y lo que se busca.
 - **API (LR-52).** Las conexiones y el detector se comparten entre peticiones, el arranque usa la hora UTC sin zona y una frecuencia nominal de 50 Hz. No se ha probado con carga ni concurrencia.
-- **Servicio (LR-61).** `pkgs/msgait.service` no despliega este repositorio. El flujo de GitHub Actions está escrito pero no se ha ejecutado todavía.
+- **Servicio (LR-61).** `pkgs/msgait.service` no despliega este repositorio. El flujo de GitHub Actions (`.github/workflows/tests.yml`) instala el proyecto desde cero y pasa los tests en Linux y Windows con Python 3.11, 3.12 y 3.13.
 
 El detalle de lo corregido en el código heredado está en [config/README.md](config/README.md).

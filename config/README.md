@@ -194,9 +194,10 @@ Solo está probado con simulaciones (`tests/test_access_lr.py`); no hay base Pos
 ```bash
 msfeat-graficas                                         # lee paths.output_dataset
 msfeat-graficas --data otro.xlsx --out carpeta --verbose 2
+msfeat-graficas --out carpeta --sin-procedencia         # figuras para la memoria, sin el pie de procedencia
 ```
 
-Lee el Excel del pipeline (necesita las hojas `Datos_Pacientes`, `Ensayos` y `Procedencia`) y escribe en `resultados_graficos/`. Todas las figuras son exploratorias y llevan al pie el archivo de origen, su fecha, el commit, la huella de la configuración y el tamaño de muestra.
+Lee el Excel del pipeline (necesita las hojas `Datos_Pacientes`, `Ensayos` y `Procedencia`) y escribe en `resultados_graficos/`. Todas las figuras son exploratorias y llevan al pie el archivo de origen, su fecha, el commit, la huella de la configuración y el tamaño de muestra. Con `--sin-procedencia` se generan sin ese pie, para la memoria del TFG, donde la procedencia y el tamaño de muestra van en el texto y en el pie de cada figura.
 
 - **Boxplots y asimetría:** un valor por paciente, con n >= 3. El eje de la asimetría cubre todo el rango del índice (0-200 %) y se anota cuántos pacientes no tienen asimetría calculable. La línea del 10 % es una referencia sin significado clínico acreditado.
 - **Correlaciones:** exploratorias. Spearman por pares, cada par con sus propios casos completos y n >= 10; valores p ajustados por FDR (Benjamini-Hochberg, 0,05). Los pares relacionados por construcción no se calculan ni entran en el ajuste: apoyo y balanceo del mismo pie, zancadas y cadencia de zancada del mismo pie, e índice de simetría con la cadencia de cada pie. Junto a cada matriz se guarda `correlaciones_<test>.csv` con N, rho, p, p ajustado y la causa de exclusión de cada par.

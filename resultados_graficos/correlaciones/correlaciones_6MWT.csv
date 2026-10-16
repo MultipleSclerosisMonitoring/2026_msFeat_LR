@@ -1,0 +1,137 @@
+test,variable_x,variable_y,n,rho,p,p_fdr,significativo_fdr,motivo_exclusion
+6MWT,6MWT_Left_zancadas,6MWT_Left_cadencia_zancada,13,,,,False,relacionados por construcción
+6MWT,6MWT_Left_zancadas,6MWT_Left_apoyo_prc,8,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Left_balanceo_prc,8,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Left_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Left_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Left_stride_length_cm,9,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Left_excursion_tobillo_cm,9,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Right_zancadas,41,0.9438,2.407478293561854e-20,2.888973952274225e-19,True,
+6MWT,6MWT_Left_zancadas,6MWT_Right_cadencia_zancada,10,0.4667,0.17393859716506654,0.3478771943301331,False,
+6MWT,6MWT_Left_zancadas,6MWT_Right_apoyo_prc,9,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Right_balanceo_prc,9,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_zancadas,6MWT_Right_stride_length_cm,10,-0.1033,0.7763340602409097,0.9325233689986284,False,
+6MWT,6MWT_Left_zancadas,6MWT_Right_excursion_tobillo_cm,10,-0.0729,0.8412712675592938,0.9325233689986284,False,
+6MWT,6MWT_Left_zancadas,6MWT_symmetry_index,9,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Left_apoyo_prc,8,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Left_balanceo_prc,8,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Left_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Left_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Left_stride_length_cm,6,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Left_excursion_tobillo_cm,6,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_zancadas,13,0.5227,0.0668485713209748,0.16043657117033952,False,
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_cadencia_zancada,9,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_apoyo_prc,9,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_balanceo_prc,9,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_stride_length_cm,7,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_Right_excursion_tobillo_cm,7,,,,False,n < 10
+6MWT,6MWT_Left_cadencia_zancada,6MWT_symmetry_index,9,,,,False,relacionados por construcción
+6MWT,6MWT_Left_apoyo_prc,6MWT_Left_balanceo_prc,8,,,,False,relacionados por construcción
+6MWT,6MWT_Left_apoyo_prc,6MWT_Left_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Left_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Left_stride_length_cm,2,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Left_excursion_tobillo_cm,2,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_zancadas,8,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_cadencia_zancada,6,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_apoyo_prc,6,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_balanceo_prc,6,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_stride_length_cm,3,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_Right_excursion_tobillo_cm,3,,,,False,n < 10
+6MWT,6MWT_Left_apoyo_prc,6MWT_symmetry_index,6,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Left_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Left_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Left_stride_length_cm,2,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Left_excursion_tobillo_cm,2,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_zancadas,8,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_cadencia_zancada,6,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_apoyo_prc,6,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_balanceo_prc,6,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_stride_length_cm,3,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_Right_excursion_tobillo_cm,3,,,,False,n < 10
+6MWT,6MWT_Left_balanceo_prc,6MWT_symmetry_index,6,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Left_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Left_stride_length_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Left_excursion_tobillo_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_zancadas,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_cadencia_zancada,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_apoyo_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_balanceo_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_stride_length_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_Right_excursion_tobillo_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_decaimiento_prc,6MWT_symmetry_index,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Left_stride_length_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Left_excursion_tobillo_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_zancadas,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_cadencia_zancada,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_apoyo_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_balanceo_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_stride_length_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_Right_excursion_tobillo_cm,0,,,,False,n < 10
+6MWT,6MWT_Left_pendiente_cadencia,6MWT_symmetry_index,0,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Left_excursion_tobillo_cm,9,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_zancadas,9,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_cadencia_zancada,4,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_apoyo_prc,4,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_balanceo_prc,4,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_stride_length_cm,7,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_Right_excursion_tobillo_cm,7,,,,False,n < 10
+6MWT,6MWT_Left_stride_length_cm,6MWT_symmetry_index,4,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_zancadas,9,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_cadencia_zancada,4,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_apoyo_prc,4,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_balanceo_prc,4,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_stride_length_cm,7,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_Right_excursion_tobillo_cm,7,,,,False,n < 10
+6MWT,6MWT_Left_excursion_tobillo_cm,6MWT_symmetry_index,4,,,,False,n < 10
+6MWT,6MWT_Right_zancadas,6MWT_Right_cadencia_zancada,11,,,,False,relacionados por construcción
+6MWT,6MWT_Right_zancadas,6MWT_Right_apoyo_prc,10,-0.1277,0.7252501396569363,0.9325233689986284,False,
+6MWT,6MWT_Right_zancadas,6MWT_Right_balanceo_prc,10,0.1277,0.7252501396569363,0.9325233689986284,False,
+6MWT,6MWT_Right_zancadas,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Right_zancadas,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Right_zancadas,6MWT_Right_stride_length_cm,10,0.0303,0.9337729580941466,0.9337729580941466,False,
+6MWT,6MWT_Right_zancadas,6MWT_Right_excursion_tobillo_cm,10,0.0667,0.8548130882487427,0.9325233689986284,False,
+6MWT,6MWT_Right_zancadas,6MWT_symmetry_index,9,,,,False,n < 10
+6MWT,6MWT_Right_cadencia_zancada,6MWT_Right_apoyo_prc,10,0.6,0.06668799999999998,0.16043657117033952,False,
+6MWT,6MWT_Right_cadencia_zancada,6MWT_Right_balanceo_prc,10,-0.6,0.06668799999999998,0.16043657117033952,False,
+6MWT,6MWT_Right_cadencia_zancada,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Right_cadencia_zancada,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Right_cadencia_zancada,6MWT_Right_stride_length_cm,6,,,,False,n < 10
+6MWT,6MWT_Right_cadencia_zancada,6MWT_Right_excursion_tobillo_cm,6,,,,False,n < 10
+6MWT,6MWT_Right_cadencia_zancada,6MWT_symmetry_index,9,,,,False,relacionados por construcción
+6MWT,6MWT_Right_apoyo_prc,6MWT_Right_balanceo_prc,10,,,,False,relacionados por construcción
+6MWT,6MWT_Right_apoyo_prc,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Right_apoyo_prc,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Right_apoyo_prc,6MWT_Right_stride_length_cm,5,,,,False,n < 10
+6MWT,6MWT_Right_apoyo_prc,6MWT_Right_excursion_tobillo_cm,5,,,,False,n < 10
+6MWT,6MWT_Right_apoyo_prc,6MWT_symmetry_index,9,,,,False,n < 10
+6MWT,6MWT_Right_balanceo_prc,6MWT_Right_decaimiento_prc,0,,,,False,n < 10
+6MWT,6MWT_Right_balanceo_prc,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Right_balanceo_prc,6MWT_Right_stride_length_cm,5,,,,False,n < 10
+6MWT,6MWT_Right_balanceo_prc,6MWT_Right_excursion_tobillo_cm,5,,,,False,n < 10
+6MWT,6MWT_Right_balanceo_prc,6MWT_symmetry_index,9,,,,False,n < 10
+6MWT,6MWT_Right_decaimiento_prc,6MWT_Right_pendiente_cadencia,0,,,,False,n < 10
+6MWT,6MWT_Right_decaimiento_prc,6MWT_Right_stride_length_cm,0,,,,False,n < 10
+6MWT,6MWT_Right_decaimiento_prc,6MWT_Right_excursion_tobillo_cm,0,,,,False,n < 10
+6MWT,6MWT_Right_decaimiento_prc,6MWT_symmetry_index,0,,,,False,n < 10
+6MWT,6MWT_Right_pendiente_cadencia,6MWT_Right_stride_length_cm,0,,,,False,n < 10
+6MWT,6MWT_Right_pendiente_cadencia,6MWT_Right_excursion_tobillo_cm,0,,,,False,n < 10
+6MWT,6MWT_Right_pendiente_cadencia,6MWT_symmetry_index,0,,,,False,n < 10
+6MWT,6MWT_Right_stride_length_cm,6MWT_Right_excursion_tobillo_cm,10,0.9273,0.00011203450639397583,0.000672207038363855,True,
+6MWT,6MWT_Right_stride_length_cm,6MWT_symmetry_index,5,,,,False,n < 10
+6MWT,6MWT_Right_excursion_tobillo_cm,6MWT_symmetry_index,5,,,,False,n < 10
