@@ -18,6 +18,7 @@ postgresql:
   # connect_timeout: 10         # opcional, en segundos; sin esta clave no se aplica timeout
 registry:
   exclude_codeids: []           # pacientes cuyos eventos no se procesan (quedan como EXCLUDED), p. ej. [AMIR-48]
+  influx_time: civil            # civil: hora de reloj del registro (R27); utc: instante real en UTC (pendiente de confirmar, D14)
 paths:
   registry_csv: ../tests.csv
   output_folder: ../data/raw
@@ -49,7 +50,8 @@ processing:
   min_strides:
     6MWT: 30                    # en el ensayo completo
     2MWT: 10
-    T25FW: 4                    # juntando los intentos del paciente en el mismo día
+    T25FW: 4                    # juntando los intentos de la misma sesión del paciente
+  pooling_session_gap_s: 1800.0 # provisional: intentos separados como mucho 30 min son de la misma sesión (no se junta mañana con tarde)
   min_strides_minute: 20        # en cada minuto que compara el decaimiento
   skip_first_strides: 1         # zancadas de arranque que se descartan en cada pie al inicio de cada ensayo
   # --- Filtros ---

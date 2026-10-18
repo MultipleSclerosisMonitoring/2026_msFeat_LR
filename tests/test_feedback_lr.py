@@ -765,13 +765,13 @@ def test_t25fw_asymmetry_never_compares_feet_from_different_days(tmp_path):
         GaitPipeline(str(config)).run_from_csv(test_type='all')
     book = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name=None)
     patients = book['Datos_Pacientes'].replace('N/A', np.nan)
-    # Cada pie tiene su cadencia del paciente (de días distintos)...
+    # Cada pie tiene su cadencia del paciente (de sesiones distintas)...
     assert patients.loc[0, 'T25FW_Left_cadencia_zancada'] == pytest.approx(60, abs=1)
     assert patients.loc[0, 'T25FW_Right_cadencia_zancada'] == pytest.approx(48, abs=1)
     # ...pero compararlas daría un 22 % sin ningún ensayo bilateral: la asimetría queda vacía.
     assert pd.isna(patients.loc[0, 'T25FW_symmetry_index'])
     trace = book['Agregacion_Pacientes'].set_index('test_type')
-    assert trace.loc['T25FW', 'dias_bilaterales'] == 0 and 'días distintos' in trace.loc['T25FW', 'regla']
+    assert trace.loc['T25FW', 'sesiones_bilaterales'] == 0 and 'sesiones distintas' in trace.loc['T25FW', 'regla']
 
 
 def test_t25fw_asymmetry_is_the_mean_of_the_bilateral_days(tmp_path):
@@ -793,4 +793,98 @@ def test_t25fw_asymmetry_is_the_mean_of_the_bilateral_days(tmp_path):
     asymmetry = patients.loc[0, 'T25FW_symmetry_index']
     expected = (0.0 + abs(60 - 48) / 54 * 100) / 2                        # media de los índices diarios
     assert asymmetry == pytest.approx(expected, abs=1.0)
-    assert book['Agregacion_Pacientes'].set_index('test_type').loc['T25FW', 'dias_bilaterales'] == 2
+    assert book['Agregacion_Pacientes'].set_index('test_type').loc['T25FW', 'sesiones_bilaterales'] == 2
+
+
+def test_t25fw_morning_and_afternoon_sessions_of_the_same_day_are_not_pooled(tmp_path):
+    """Mismo día, dos sesiones separadas más de pooling_session_gap_s: no se juntan ni se comparan entre sí."""
+    from gait_analysis.pipeline import GaitPipeline
+    rows = [
+        ('51', 'PAT-1', '2025-01-01 10:05:00+01', '2025-01-01 10:05:05+01', 'T25FW'),     # mañana: solo el izquierdo
+        ('52', 'PAT-1', '2025-01-01 10:06:00+01', '2025-01-01 10:06:05+01', 'T25FW'),
+        ('53', 'PAT-1', '2025-01-01 17:05:00+01', '2025-01-01 17:05:08+01', 'T25FW'),     # tarde: solo el derecho
+        ('54', 'PAT-1', '2025-01-01 17:06:00+01', '2025-01-01 17:06:08+01', 'T25FW'),
+    ]
+    config = write_config(tmp_path, write_csv(tmp_path, rows))
+    responses = [
+        [step_signal('Left', 5, '2025-01-01 10:05:00')], [step_signal('Left', 5, '2025-01-01 10:06:00')],
+        [step_signal('Right', 8, '2025-01-01 17:05:00', cadence_hz=0.8)], [step_signal('Right', 8, '2025-01-01 17:06:00', cadence_hz=0.8)],
+    ]
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client(responses)):
+        GaitPipeline(str(config)).run_from_csv(test_type='all')
+    book = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name=None)
+    patients = book['Datos_Pacientes'].replace('N/A', np.nan)
+    assert patients.loc[0, 'T25FW_Left_cadencia_zancada'] == pytest.approx(60, abs=1)
+    assert patients.loc[0, 'T25FW_Right_cadencia_zancada'] == pytest.approx(48, abs=1)
+    # Por día habría salido un 22 % comparando la mañana con la tarde; por sesión no hay ninguna bilateral.
+    assert pd.isna(patients.loc[0, 'T25FW_symmetry_index'])
+    assert book['Agregacion_Pacientes'].set_index('test_type').loc['T25FW', 'sesiones_bilaterales'] == 0
+
+
+def test_sessions_are_cut_by_the_gap_between_attempts():
+    from gait_analysis.pipeline import GaitPipeline
+    at = lambda text: pd.Timestamp(f'2025-01-01 {text}')
+    rows = [{'TrialID': tid, 'CodeID': code, 'inicio': at(start), 'fin': at(stop)} for tid, code, start, stop in (
+        ('1', 'A', '10:00:00', '10:00:10'), ('2', 'A', '10:01:00', '10:01:10'),
+        ('3', 'A', '10:31:10', '10:31:20'),                                   # 30 min justos tras el fin del 2: misma sesión
+        ('4', 'A', '11:01:21', '11:01:30'),                                   # 30 min y 1 s: sesión nueva
+        ('5', 'B', '10:00:30', '10:00:40'))]                                  # otro paciente, otra sesión
+    sessions = GaitPipeline._sessions(rows, pd.Timedelta(minutes=30))
+    assert sessions['1'] == sessions['2'] == sessions['3'] != sessions['4']
+    assert sessions['5'] != sessions['1']
+
+
+# --- D14: criterio horario configurable (registry.influx_time) --------------------------
+
+@pytest.mark.parametrize('registry, civil, utc', [
+    ('2025-12-12 19:24:00+01', '2025-12-12T19:24:00Z', '2025-12-12T18:24:00Z'),     # invierno: una hora
+    ('2026-07-01 19:24:00+02', '2026-07-01T19:24:00Z', '2026-07-01T17:24:00Z'),     # verano: dos horas
+])
+def test_registry_times_follow_the_configured_criterion(tmp_path, registry, civil, utc):
+    from msTools.timeutils import influx_time_z
+    assert influx_time_z(registry) == influx_time_z(registry, 'civil') == civil
+    assert influx_time_z(registry, 'utc') == utc
+    path = write_csv(tmp_path, [('1', 'PAT-1', registry, registry.replace(':24:00', ':30:00'), '6MWT')])
+    by_default, _ = load_registry(str(path))
+    in_utc, _ = load_registry(str(path), time_criterion='utc')
+    assert (by_default[0].start_iso, by_default[0].time_criterion) == (civil, 'civil')
+    assert (in_utc[0].start_iso, in_utc[0].time_criterion) == (utc, 'utc')
+    assert in_utc[0].duration_s == by_default[0].duration_s == 360.0
+
+
+def test_influx_time_option_is_validated(tmp_path):
+    from msConfig import ConfigError
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    assert load_config(config)['registry']['influx_time'] == 'civil'
+    data = yaml.safe_load(config.read_text())
+    data['registry'] = {'influx_time': 'madrid'}
+    config.write_text(yaml.safe_dump(data))
+    with pytest.raises(ConfigError, match='influx_time'):
+        load_config(config)
+
+
+def test_signals_downloaded_with_another_time_criterion_are_not_reused(tmp_path, caplog):
+    """Cambiar de civil a utc obliga a volver a descargar: la ventana buscada era otra."""
+    from gait_analysis.pipeline import GaitPipeline
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client([[signal('Left'), signal('Right')],
+                                                                      [signal('Left', start='2025-01-02 10:00:00')]])):
+        GaitPipeline(str(config)).run_from_csv()
+    assert read_meta(tmp_path / 'store/custom.h5', KEY)['hora_influx'] == 'civil'
+    data = yaml.safe_load(config.read_text())
+    data['registry'] = {'influx_time': 'utc'}
+    config.write_text(yaml.safe_dump(data))
+    from gait_analysis.pipeline import NoDataError
+    with caplog.at_level(logging.ERROR, logger='msGait'), pytest.raises(NoDataError):
+        GaitPipeline(str(config), offline=True).run_from_csv(stored_only=True)      # nada reutilizable: sin datos
+    assert caplog.text.count('ERR_STORED_IDENTITY') == 2 and 'hora_influx: civil != utc' in caplog.text
+    # Y con conexión se vuelven a consultar, ahora con la ventana en UTC (una hora antes en invierno).
+    client = fake_client([[signal('Left', start='2025-01-01 09:00:00'), signal('Right', start='2025-01-01 09:00:00')],
+                          [signal('Left', start='2025-01-02 09:00:00')]])
+    with patch('gait_analysis.pipeline.InfluxDBClient', client):
+        resumed = GaitPipeline(str(config)).run_from_csv(missing_only=True)
+    assert {r.status for r in resumed} == {'OK'} and client.return_value.query_api.return_value.query_data_frame.call_count == 2
+    query = client.return_value.query_api.return_value.query_data_frame.call_args_list[0].args[0]
+    assert 'start: 2025-01-01T09:00:00' in query
+    provenance = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name='Procedencia').set_index('clave')['valor']
+    assert provenance['criterio_hora_influx'] == 'utc'

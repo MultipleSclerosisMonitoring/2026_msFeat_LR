@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from msTools.timeutils import experiment_wallclock, influx_wallclock_z
+from msTools.timeutils import experiment_wallclock, influx_time_z
 from msTools.i18n import _
 
 logger = logging.getLogger("msGait.Registry")
@@ -42,9 +42,12 @@ class Trial:
         test_type (str): Código del test (columna ``t_code``).
         d_from (str): Inicio tal como figura en el registro.
         d_until (str): Fin tal como figura en el registro.
-        start_iso (str): Inicio en el formato que espera ``range()`` de Flux.
+        start_iso (str): Inicio en el formato que espera ``range()`` de Flux,
+            en la escala de InfluxDB según ``time_criterion``.
         stop_iso (str): Fin en el formato que espera ``range()`` de Flux.
         duration_s (float): Duración del evento en segundos.
+        time_criterion (str): Criterio con el que se pasaron las horas del
+            registro a la escala de InfluxDB (``registry.influx_time``).
     """
     trial_id: str
     codeid: str
@@ -54,6 +57,7 @@ class Trial:
     start_iso: str
     stop_iso: str
     duration_s: float
+    time_criterion: str = "civil"
 
 
 @dataclass
@@ -140,6 +144,7 @@ def load_registry(
     test_type: str | None = None,
     ids: Iterable[str] | None = None,
     exclude_codeids: Iterable[str] | None = None,
+    time_criterion: str = "civil",
 ) -> tuple[list[Trial], list[TrialResult]]:
     """Lee y valida el registro completo antes de acceder a ninguna base de datos.
 
@@ -159,6 +164,9 @@ def load_registry(
         ids (Iterable[str] | None): Identificadores de evento a seleccionar.
             ``None`` selecciona todos.
         exclude_codeids (Iterable[str] | None): Pacientes cuyos eventos se excluyen.
+        time_criterion (str): ``civil`` (por defecto, R27) o ``utc``: cómo se
+            pasan las horas del registro a la escala de InfluxDB
+            (:func:`msTools.timeutils.influx_time`).
 
     Returns:
         tuple[list[Trial], list[TrialResult]]: Eventos válidos seleccionados y
@@ -215,8 +223,8 @@ def load_registry(
         stop = experiment_wallclock(row["d_until"])
         trials.append(Trial(
             row["id"], row["codeid"], row["t_code"], row["d_from"], row["d_until"],
-            influx_wallclock_z(row["d_from"]), influx_wallclock_z(row["d_until"]),
-            round((stop - start).total_seconds(), 2),
+            influx_time_z(row["d_from"], time_criterion), influx_time_z(row["d_until"], time_criterion),
+            round((stop - start).total_seconds(), 2), time_criterion,
         ))
 
     if wanted_ids is not None:

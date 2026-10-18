@@ -90,8 +90,15 @@ class ProcessingConfig:
             debe tener la presión para usarla.
         min_strides (Dict[str, int]): Mínimo de zancadas válidas por prueba para
             informar sus métricas de marcha (6MWT: 30 en el ensayo; 2MWT: 10;
-            T25FW: 4, juntando los intentos del paciente en el mismo día). Una
-            prueba sin mínimo definido no informa métricas de marcha.
+            T25FW: 4, juntando los intentos de la misma sesión del paciente).
+            Una prueba sin mínimo definido no informa métricas de marcha.
+        pooling_session_gap_s (float): En las pruebas cuyos intentos se juntan
+            (T25FW), dos intentos del mismo paciente son de la misma sesión si
+            entre el fin de uno y el inicio del siguiente pasan como mucho
+            estos segundos; así no se juntan una sesión de mañana y otra de
+            tarde. Provisional: 30 min, en el hueco que muestra el registro
+            (los intentos seguidos se separan menos de 10 min y las sesiones
+            distintas, más de una hora).
         min_strides_minute (int): Mínimo de zancadas válidas en cada minuto
             que se compara en el decaimiento.
         skip_first_strides (int): Zancadas completas de cada pie que se
@@ -189,6 +196,7 @@ class ProcessingConfig:
     imu_min_active_s: float = 30.0
     min_coverage: float = 0.8
     min_strides: Dict[str, int] = field(default_factory=lambda: {"6MWT": 30, "2MWT": 10, "T25FW": 4})
+    pooling_session_gap_s: float = 1800.0
     min_strides_minute: int = 20
     skip_first_strides: int = 1
     filter_order: int = 4

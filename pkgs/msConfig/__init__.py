@@ -271,6 +271,10 @@ def _validate_analysis(config: dict, path: Path) -> None:
     excluded = config.setdefault('registry', {}).setdefault('exclude_codeids', [])
     if not isinstance(excluded, list) or any(not isinstance(code, str) or not code.strip() for code in excluded):
         raise ConfigError('registry.exclude_codeids debe ser una lista de identificadores de paciente.')
+    # Cómo se buscan en InfluxDB las horas del registro: hora civil (R27, por defecto) o UTC (duda D14).
+    criterion = config['registry'].setdefault('influx_time', 'civil')
+    if criterion not in ('civil', 'utc'):
+        raise ConfigError('registry.influx_time debe ser civil o utc.')
     batch = config.setdefault('batch', {})
     batch.setdefault('test_type', '6MWT')
     if not isinstance(batch['test_type'], str) or not batch['test_type'].strip():

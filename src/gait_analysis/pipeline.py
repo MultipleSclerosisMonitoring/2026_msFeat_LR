@@ -38,10 +38,11 @@ SIDES = ("Left", "Right")
 # Pruebas en las que no se informan métricas de marcha: la marcha estable es demasiado corta.
 TESTS_WITHOUT_GAIT_METRICS = ("TUG",)
 NOT_REPORTED = "NO_APLICA"
-# Pruebas cuyos intentos del mismo paciente y día se juntan para alcanzar el mínimo de zancadas.
+# Pruebas cuyos intentos de la misma sesión del paciente se juntan para alcanzar el mínimo de zancadas.
 POOLED_TESTS = ("T25FW",)
-POOLED_NOTE = ("zancadas de los intentos del mismo día juntas; resultado orientativo; asimetría: media de los índices "
-               "de los días con cadencia en los dos pies (nunca se comparan pies de días distintos)")
+POOLED_NOTE = ("zancadas de los intentos de la misma sesión juntas (intentos separados menos de "
+               "processing.pooling_session_gap_s); resultado orientativo; asimetría: media de los índices de las sesiones "
+               "con cadencia en los dos pies (nunca se comparan pies de sesiones distintas)")
 
 # Alcance de cada hoja del Excel (se escribe en la hoja Leeme).
 SHEET_GUIDE = (
@@ -49,7 +50,7 @@ SHEET_GUIDE = (
     ("Datos_Ensayos", "Todas las métricas de cada ensayo en una fila, con su fecha: es la tabla para seguir a un paciente en el tiempo. Columnas {test}_{pie}_{métrica} y su estado de confianza {test}_{pie}_estado_{grupo} (OK o WARNING).", "evento"),
     ("Datos_Pacientes", "Resumen por paciente: media de sus ensayos con valor, incluidos los que están en WARNING; {test}_ensayos_warning dice cuántos lo están y {test}_{pie}_estado_{grupo}_n_warning, cuántos en cada grupo de métricas. Columnas {test}_{pie}_{métrica}.", "paciente"),
     ("Calidad_Series", "Resultado de cada filtro de calidad por serie (presión, IMU, mínimo de zancadas) y motivo principal de lo que no se informa. Distingue lo observado de lo rellenado: cobertura_observada_* (fracción de filas con valor nuevo), cobertura_* (fracción utilizable tras rellenar), muestras_interpoladas, muestras_retenidas (último valor repetido) y muestras_repetidas_reposo (IMU repetida con el pie quieto, aceptada como medida).", "evento y pie"),
-    ("Agregacion_Pacientes", "Ensayos que entran en cada paciente y test, cuántos son bilaterales y regla aplicada. En el T25FW, dias_bilaterales: días con cadencia en los dos pies, de los que sale la asimetría del paciente.", "paciente y test"),
+    ("Agregacion_Pacientes", "Ensayos que entran en cada paciente y test, cuántos son bilaterales y regla aplicada. En el T25FW, sesiones_bilaterales: sesiones con cadencia en los dos pies, de las que sale la asimetría del paciente.", "paciente y test"),
     ("Ensayos", "Todas las métricas de cada ensayo y pie, con estado, motivo, cobertura y método de cada una.", "evento y pie"),
     ("Asimetria", "Índice de simetría de cadencia de cada ensayo; vacío si falta un pie (bilateral_available). Incluye la comparación del recuento de zancadas de los dos pies.", "evento"),
     ("Zancadas", "Cada zancada integrada entre dos pies planos: longitud, excursión vertical del tobillo o su causa de exclusión. La MTC queda vacía.", "zancada"),
@@ -66,7 +67,7 @@ REPORT_SCOPE = (
     "trayectoria a la punta. En TUG no se informan métricas de marcha (su métrica es la duración). En todos los ensayos se "
     "descarta la primera zancada de cada pie y, junto a cada giro, las zancadas de frenada y de arranque; si la IMU no es "
     "válida no se sabe dónde están los giros y esa exclusión no se aplica (columna giros_excluidos). En T25FW se juntan las "
-    "zancadas de los intentos del mismo día y el resultado es orientativo; en cada intento se avisa si la suma de las "
+    "zancadas de los intentos de la misma sesión y el resultado es orientativo; en cada intento se avisa si la suma de las "
     "longitudes de zancada no es coherente con los 7,62 m de la prueba (t25fw_distancia_coherente), sin que eso valide ni "
     "calibre la longitud. El decaimiento del 6MWT es la pendiente de la "
     "cadencia minuto a minuto. No hay eventos anotados ni otro dispositivo de referencia: la "
@@ -121,6 +122,8 @@ class GaitPipeline:
             self.bucket = config["influxdb"]["bucket"]
             self.measurement = config["influxdb"]["measurement"]
         self.h5_path = config["paths"]["h5_path"]
+        # Cómo se buscan en InfluxDB las horas del registro (registry.influx_time): civil, según R27, o utc (D14).
+        self.time_criterion = config.get("registry", {}).get("influx_time", "civil")
 
         # Herramientas
         self.processing = ProcessingConfig.from_mapping(config.get("processing"))
@@ -256,7 +259,7 @@ class GaitPipeline:
         }
         if trial.test_type == "6MWT":
             decay_res = self.calculator.calcular_decaimiento_6mwt(
-                df_side, duracion_registro_s=trial.duration_s, inicio=experiment_wallclock(trial.d_from),
+                df_side, duracion_registro_s=trial.duration_s, inicio=pd.Timestamp(trial.start_iso).tz_localize(None),
                 skip_first=self.processing.skip_first_strides,
             )
             metrics["decaimiento_prc"] = decay_res["6mwt_decaimiento"]
@@ -411,7 +414,7 @@ class GaitPipeline:
         strides: dict[str, tuple[float, float]] = {}
         swing_rows: list[dict[str, Any]] = []
         pool_rows: list[dict[str, Any]] = []
-        day = str(experiment_wallclock(trial.d_from).date())
+        attempt = {"inicio": experiment_wallclock(trial.d_from), "fin": experiment_wallclock(trial.d_until)}
 
         for side in SIDES:
             df_side = frames.get(side)
@@ -419,7 +422,7 @@ class GaitPipeline:
                 continue
             metrics, swings, pool = self._analyze_foot(trial, side, df_side)
             swing_rows.extend({**identity, "Foot": side, **swing} for swing in swings)
-            pool_rows.append({**identity, "Foot": side, "dia": day, "inicio_serie": pd.to_datetime(df_side["_time"]).min(), **pool})
+            pool_rows.append({**identity, "Foot": side, **attempt, "inicio_serie": pd.to_datetime(df_side["_time"]).min(), **pool})
             cadences[side] = metrics["cadencia_zancada"]
             strides[side] = (metrics["zancadas"], metrics["n_tramos"])
             foot_rows.append({
@@ -478,18 +481,19 @@ class GaitPipeline:
 
         En las pruebas de ``POOLED_TESTS`` (T25FW) un solo intento no alcanza el
         mínimo de zancadas: se juntan las zancadas de los intentos del mismo
-        paciente y día, se calcula la métrica si alcanzan el mínimo y el valor
-        del paciente es la media de sus días. El resultado es orientativo. La
-        asimetría se calcula día a día, solo en los días en que los dos pies
-        alcanzan el mínimo, y el valor del paciente es la media de esos índices
-        diarios: nunca se compara la cadencia de un pie de un día con la del
-        otro pie de otro día.
+        paciente y sesión (:meth:`_sessions`), se calcula la métrica si alcanzan
+        el mínimo y el valor del paciente es la media de sus sesiones. El
+        resultado es orientativo. La asimetría se calcula sesión a sesión, solo
+        en las sesiones en que los dos pies alcanzan el mínimo, y el valor del
+        paciente es la media de esos índices: nunca se compara la cadencia de un
+        pie de una sesión con la del otro pie de otra sesión, aunque sean del
+        mismo día.
 
         Args:
             wide_rows (list[dict[str, Any]]): Una fila ancha por evento.
             asymmetry_rows (list[dict[str, Any]]): Una fila de asimetría por evento.
             pool_rows (list[dict[str, Any]] | None): Valores por zancada de cada
-                evento y pie, con el día del ensayo.
+                evento y pie, con el inicio y el fin del ensayo.
 
         Returns:
             tuple[pd.DataFrame, pd.DataFrame]: Tabla con una fila por paciente
@@ -512,23 +516,25 @@ class GaitPipeline:
                     count = events[column].eq("WARNING").groupby(events["CodeID"], sort=False).sum()
                     patients[f"{column}_n_warning"] = count.where(done).reindex(patients.index)
         pooled_counts: dict[tuple[str, str], int] = defaultdict(int)
-        bilateral_days: dict[tuple[str, str], int] = defaultdict(int)
+        bilateral_sessions: dict[tuple[str, str], int] = defaultdict(int)
+        gap = pd.Timedelta(seconds=self.processing.pooling_session_gap_s)
         for test in POOLED_TESTS:
             minimum = self._min_strides(test)
             if minimum is None:
                 continue
+            rows = [row for row in pool_rows or [] if row["test_type"] == test]
+            session_of = self._sessions(rows, gap)
             grouped: dict[tuple[str, str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-            for row in pool_rows or []:
-                if row["test_type"] == test:
-                    for name in ("tiempos", "balanceos", "longitudes", "alturas"):
-                        grouped[(row["CodeID"], row["Foot"], row["dia"])][name].extend(row[name])
-            per_day: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-            daily_cadence: dict[tuple[str, str], dict[str, float]] = defaultdict(dict)
-            for (code, side, day), values in grouped.items():
-                target = per_day[(code, side)]
+            for row in rows:
+                for name in ("tiempos", "balanceos", "longitudes", "alturas"):
+                    grouped[(row["CodeID"], row["Foot"], session_of[row["TrialID"]])][name].extend(row[name])
+            per_session: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+            session_cadence: dict[tuple[str, str], dict[str, float]] = defaultdict(dict)
+            for (code, side, session), values in grouped.items():
+                target = per_session[(code, side)]
                 if len(values["tiempos"]) >= minimum:
-                    daily_cadence[(code, day)][side] = 60.0 / float(np.mean(values["tiempos"]))
-                    target["cadencia_zancada"].append(daily_cadence[(code, day)][side])
+                    session_cadence[(code, session)][side] = 60.0 / float(np.mean(values["tiempos"]))
+                    target["cadencia_zancada"].append(session_cadence[(code, session)][side])
                     target["zancadas"].append(len(values["tiempos"]))
                     pooled_counts[(code, test)] += len(values["tiempos"])
                 if len(values["balanceos"]) >= minimum:
@@ -538,23 +544,23 @@ class GaitPipeline:
                     target["stride_length_cm"].append(float(np.mean(values["longitudes"])))
                 if len(values["alturas"]) >= minimum:
                     target["excursion_tobillo_cm"].append(float(np.mean(values["alturas"])))
-            # Asimetría día a día: solo los días con cadencia en los dos pies.
-            daily_symmetry: dict[str, list[float]] = defaultdict(list)
-            for (code, _day), sides in daily_cadence.items():
+            # Asimetría sesión a sesión: solo las sesiones con cadencia en los dos pies.
+            session_symmetry: dict[str, list[float]] = defaultdict(list)
+            for (code, _session), sides in session_cadence.items():
                 left, right = sides.get("Left", 0.0), sides.get("Right", 0.0)
                 if left > 0 and right > 0:
-                    daily_symmetry[code].append(abs(left - right) / (0.5 * (left + right)) * 100)
-                    bilateral_days[(code, test)] += 1
+                    session_symmetry[code].append(abs(left - right) / (0.5 * (left + right)) * 100)
+                    bilateral_sessions[(code, test)] += 1
             for code in patients.index:
                 for side in SIDES:
                     for name in ("zancadas", "cadencia_zancada", "apoyo_prc", "balanceo_prc", "stride_length_cm", "excursion_tobillo_cm"):
                         column = f"{test}_{side}_{name}"
                         if column in patients.columns and pd.notna(patients.at[code, f"{test}_duracion_seg"]):
-                            days = per_day.get((code, side), {}).get(name, [])
-                            patients.at[code, column] = float(np.mean(days)) if days else np.nan
+                            sessions = per_session.get((code, side), {}).get(name, [])
+                            patients.at[code, column] = float(np.mean(sessions)) if sessions else np.nan
                 column = f"{test}_{SYMMETRY_METRIC}"
                 if column in patients.columns and pd.notna(patients.at[code, f"{test}_duracion_seg"]):
-                    values = daily_symmetry.get(code, [])
+                    values = session_symmetry.get(code, [])
                     patients.at[code, column] = float(np.mean(values)) if values else np.nan
         patients = patients.round(2).reset_index()
 
@@ -572,9 +578,9 @@ class GaitPipeline:
             pooled_counts.get((code, test), 0) if test in POOLED_TESTS else np.nan
             for code, test in zip(trace["CodeID"], trace["test_type"])
         ]
-        # En las pruebas juntadas, la asimetría del paciente sale de estos días, no de los intentos sueltos.
-        trace["dias_bilaterales"] = [
-            bilateral_days.get((code, test), 0) if test in POOLED_TESTS else np.nan
+        # En las pruebas juntadas, la asimetría del paciente sale de estas sesiones, no de los intentos sueltos.
+        trace["sesiones_bilaterales"] = [
+            bilateral_sessions.get((code, test), 0) if test in POOLED_TESTS else np.nan
             for code, test in zip(trace["CodeID"], trace["test_type"])
         ]
 
@@ -587,6 +593,36 @@ class GaitPipeline:
                 _("DEBUG_REPEATED_TRIALS: Paciente {0} ({1}): eventos {2}; {3} bilaterales").format(row.CodeID, row.test_type, row.eventos, row.n_bilaterales)
             )
         return patients, trace
+
+    @staticmethod
+    def _sessions(rows: list[dict[str, Any]], gap: pd.Timedelta) -> dict[str, str]:
+        """Agrupa en sesiones los intentos de cada paciente.
+
+        Los intentos de un paciente, ordenados por inicio, pertenecen a la misma
+        sesión mientras entre el fin de uno y el inicio del siguiente pasen como
+        mucho ``gap``. Dos sesiones del mismo día (mañana y tarde) quedan
+        separadas.
+
+        Args:
+            rows (list[dict[str, Any]]): Filas por intento y pie, con ``TrialID``,
+                ``CodeID``, ``inicio`` y ``fin``.
+            gap (pd.Timedelta): Separación máxima dentro de una sesión
+                (``processing.pooling_session_gap_s``).
+
+        Returns:
+            dict[str, str]: Sesión de cada intento, identificada por el inicio de
+            su primer intento.
+        """
+        attempts = {row["TrialID"]: (row["CodeID"], row["inicio"], row["fin"]) for row in rows}
+        session_of: dict[str, str] = {}
+        last_end: dict[str, pd.Timestamp] = {}
+        label: dict[str, str] = {}
+        for trial_id, (code, start, stop) in sorted(attempts.items(), key=lambda item: (item[1][0], item[1][1])):
+            if code not in last_end or start - last_end[code] > gap:
+                label[code] = start.isoformat(timespec="seconds")
+            session_of[trial_id] = label[code]
+            last_end[code] = max(stop, last_end.get(code, stop))
+        return session_of
 
     @staticmethod
     def _metric_columns(table: pd.DataFrame) -> list[str]:
@@ -658,6 +694,7 @@ class GaitPipeline:
             "huella_registro": registry_hash,
             "almacen": self.h5_path,
             "medicion_influx": self.measurement,
+            "criterio_hora_influx": self.time_criterion,
             "regla_agregacion": AGGREGATION_RULE,
             "python": sys.version.split()[0], "pandas": pd.__version__, "numpy": np.__version__,
             **counts,
@@ -680,7 +717,8 @@ class GaitPipeline:
             FileNotFoundError: Si el registro no existe.
             RegistryError: Si al registro le faltan columnas requeridas.
         """
-        trials, _invalid = load_registry(csv_path or self.config["paths"]["registry_csv"], test_type)
+        trials, _invalid = load_registry(csv_path or self.config["paths"]["registry_csv"], test_type,
+                                         time_criterion=self.time_criterion)
         report = audit_store(self.h5_path, trials, Manifest(manifest_path_for(self.h5_path)))
         logger.info(
             _("INFO_AUDIT: {0} frente a {1} eventos del registro: {2} ausentes, {3} sin confirmar en el manifest, {4} claves huérfanas, {5} almacenes del formato anterior").format(self.h5_path, len(trials), len(report['missing']), len(report['unconfirmed']), len(report['orphan']), len(report['legacy']))
@@ -747,7 +785,8 @@ class GaitPipeline:
         """
         config = self.config
         csv_path = csv_path or config["paths"]["registry_csv"]
-        trials, results = load_registry(csv_path, test_type, ids, config.get("registry", {}).get("exclude_codeids"))
+        trials, results = load_registry(csv_path, test_type, ids, config.get("registry", {}).get("exclude_codeids"),
+                                        self.time_criterion)
         provenance_hash = hashlib.sha256(json.dumps(self.processing.to_record(), sort_keys=True).encode()).hexdigest()[:16]
 
         manifest = Manifest(manifest_path_for(self.h5_path))

@@ -32,6 +32,49 @@ def influx_wallclock_z(ts):
     return text.replace('.000000Z', 'Z')
 
 
+# Criterios para pasar la hora del registro a la escala de InfluxDB (registry.influx_time).
+TIME_CRITERIA = ("civil", "utc")
+
+
+def influx_time(ts, criterion="civil"):
+    """Pasa una hora del registro a la escala en la que se busca en InfluxDB.
+
+    - ``civil``: hora de reloj tal como figura en el registro, sin zona
+      (:func:`experiment_wallclock`). Es el criterio acordado en R27.
+    - ``utc``: instante real convertido a UTC (una hora antes en invierno y dos
+      en verano). Una hora sin zona se interpreta como hora de Madrid.
+
+    Args:
+        ts: Hora del registro (texto, ``datetime`` o ``Timestamp``).
+        criterion (str): ``civil`` o ``utc``.
+
+    Returns:
+        pd.Timestamp: Hora sin zona en la escala de InfluxDB.
+
+    Raises:
+        ValueError: Si el criterio no es uno de ``TIME_CRITERIA``.
+    """
+    if criterion == "civil":
+        return experiment_wallclock(ts)
+    if criterion == "utc":
+        return ensure_utc(ts).tz_localize(None)
+    raise ValueError(f"Criterio horario desconocido: {criterion!r} (admitidos: {', '.join(TIME_CRITERIA)})")
+
+
+def influx_time_z(ts, criterion="civil"):
+    """Formatea una hora del registro para ``range()`` de Flux según el criterio.
+
+    Args:
+        ts: Hora del registro.
+        criterion (str): ``civil`` o ``utc`` (:func:`influx_time`).
+
+    Returns:
+        str: Hora en formato ``AAAA-MM-DDTHH:MM:SS[.ffffff]Z``.
+    """
+    text = influx_time(ts, criterion).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    return text.replace('.000000Z', 'Z')
+
+
 def ensure_utc(ts):
     """
     Convert a datetime/string/Timestamp to a pandas Timestamp with UTC timezone.

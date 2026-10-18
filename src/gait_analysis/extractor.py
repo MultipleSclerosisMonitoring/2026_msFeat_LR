@@ -93,7 +93,9 @@ def identity_mismatches(store: SignalStore, keys: Iterable[str], trial: Trial) -
 
     El manifest localiza un evento solo por su identificador; si el registro
     cambió después (otro paciente, otra prueba u otras fechas con el mismo
-    identificador), las señales guardadas ya no corresponden a esa fila.
+    identificador), las señales guardadas ya no corresponden a esa fila. Lo
+    mismo ocurre si se descargaron con otro criterio horario
+    (``registry.influx_time``): la ventana buscada en InfluxDB era otra.
 
     Args:
         store (SignalStore): Almacén HDF5 abierto.
@@ -104,13 +106,16 @@ def identity_mismatches(store: SignalStore, keys: Iterable[str], trial: Trial) -
         list[str]: Campos que no coinciden, en la forma ``campo: guardado != registro``;
         vacía si todos coinciden.
     """
-    expected = {"codeid": trial.codeid, "t_code": trial.test_type, "d_from": trial.d_from, "d_until": trial.d_until}
+    expected = {"codeid": trial.codeid, "t_code": trial.test_type, "d_from": trial.d_from, "d_until": trial.d_until,
+                "hora_influx": trial.time_criterion}
     differences: list[str] = []
     for key in keys:
         try:
             meta = store.meta(key)
         except Exception as error:
             return [f"{key}: metadatos no legibles ({error})"]
+        # Lo guardado antes de existir la opción se descargó con la hora civil.
+        meta = {"hora_influx": "civil", **meta}
         for field, value in expected.items():
             stored = meta.get(field)
             if stored is None or str(stored) != str(value):
@@ -231,6 +236,7 @@ def acquire_trial(
         payload[side] = (foot.frame, {
             "id": trial.trial_id, "codeid": trial.codeid, "t_code": trial.test_type,
             "d_from": trial.d_from, "d_until": trial.d_until, "foot": side, "device": foot.device,
+            "hora_influx": trial.time_criterion,
         })
     try:
         # Publicación atómica: o quedan todos los pies del evento o no cambia nada.
@@ -377,6 +383,7 @@ class GaitDataExtractor:
         test_type = test_type or self.config['batch']['test_type']
         trials, results = load_registry(
             self._registry_path(csv_path), test_type, ids, self.config.get('registry', {}).get('exclude_codeids'),
+            self.config.get('registry', {}).get('influx_time', 'civil'),
         )
         manifest = Manifest(manifest_path_for(self._h5_database))
         completed = manifest.completed_keys() if missing_only else None
@@ -413,7 +420,8 @@ class GaitDataExtractor:
             RegistryError: Si al registro le faltan columnas requeridas.
         """
         test_type = test_type or self.config['batch']['test_type']
-        trials, _invalid = load_registry(self._registry_path(csv_path), test_type)
+        trials, _invalid = load_registry(self._registry_path(csv_path), test_type,
+                                         time_criterion=self.config.get('registry', {}).get('influx_time', 'civil'))
         report = audit_store(self._h5_database, trials, Manifest(manifest_path_for(self._h5_database)))
         logger.info(
             _("INFO_AUDIT: {0} frente a {1} eventos del registro: {2} ausentes, {3} sin confirmar en el manifest, {4} claves huérfanas, {5} claves del esquema antiguo").format(self._h5_database, len(trials), len(report['missing']), len(report['unconfirmed']), len(report['orphan']), len(report['legacy']))
