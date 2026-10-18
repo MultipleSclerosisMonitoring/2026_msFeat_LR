@@ -259,4 +259,4 @@ def test_template_shows_the_default_processing_values():
     from gait_analysis.metrics import ProcessingConfig
     template = yaml.safe_load((ROOT / 'config/config.example.yaml').read_text(encoding='utf-8'))
     assert template['processing'] == ProcessingConfig().to_record()
-    assert template['registry'] == {'exclude_codeids': [], 'influx_time': 'civil'} and template['influxdb']['connect_timeout'] == 10000
+    assert template['registry'] == {'exclude_codeids': [], 'influx_time': [{'criterio': 'civil'}, {'desde': '2025-11-01', 'criterio': 'utc'}]} and template['influxdb']['connect_timeout'] == 10000

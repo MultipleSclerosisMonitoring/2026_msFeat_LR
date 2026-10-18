@@ -145,7 +145,7 @@ def test_integer_values_from_yaml_work_in_every_method(tmp_path):
     {'decay_block_s': 100.0}, {'desconocido': 1}, {'turn_axis': 'Qz'}, {'filter_order': 2.5}, {'time_grid': 'otra'},
     {'heel_channel': 'Ay'}, {'max_interpolation_s': 0.5}, {'swing_max_prc': 120.0}, {'min_valid_strides': 1.5},
     {'cycle_min_s': 3.0}, {'swing_min_s': 1.0}, {'decay_min_minutes': 7}, {'turn_margin_after_strides': 1.5},
-    {'imu_max_stale_active': 1.2}, {'heel_rhythm_window_s': 3.0}, {'heel_highpass_hz': 30.0}, {'imu_moving_gyro': 100.0}, {'rest_gyro_quantile': 2.0}, {'max_gap_s': 0.01},
+    {'imu_min_active_s_by_test': {'T25FW': 0}}, {'heel_rhythm_window_s': 3.0}, {'heel_highpass_hz': 30.0}, {'imu_moving_gyro': 100.0}, {'rest_gyro_quantile': 2.0}, {'max_gap_s': 0.01},
     {'turn_extend_threshold': 40.0}, {'sixmwt_min_valid_minutes': 7}, {'stride_k': 50.0}, {'min_valid_strides': 2},
     {'min_strides': {'6MWT': 0}}, {'min_strides': [30]}, {'heel_min_periodicity': 1.5}, {'mtc_ok_min_cm': 9.0},
 ])
@@ -233,17 +233,17 @@ def test_repeated_imu_with_the_pressure_active_is_a_gap_and_too_many_invalidate_
     assert prepared.report['imu_estado'] == 'valida' and 0 < prepared.report['imu_repeticion_presion_activa_prc'] < 30
     # La zancada con el hueco no se integra; las demás sí.
     assert CALC.calcular_longitud_zancada(prepared)['n_zancadas_longitud'] == 18
-    # Repetir en el 12 % de las filas todavía es una IMU válida (el límite es el 30 %)...
+    # Pausas de 0,12 s: solo 2 filas de cada pausa son hueco y casi todo el tiempo activo queda fuera de huecos...
     some = frame.copy()
     for start in range(60, 2000, 100):
         some.loc[start + 1:start + 12, IMU] = some.loc[start, IMU].to_numpy()
     assert CALC.preparar(some).report['imu_estado'] == 'valida'
-    # ...pero en el 40 % no vale para nada que dependa de ella.
+    # ...pausas de 0,4 s dejan en huecos cerca del 30 % del tiempo activo (mínimo fuera de huecos: 80 %).
     many = frame.copy()
     for start in range(60, 2000, 100):
         many.loc[start + 1:start + 40, IMU] = many.loc[start, IMU].to_numpy()
     prepared = CALC.preparar(many)
-    assert prepared.report['imu_estado'] == 'no_valida' and prepared.report['imu_repeticion_presion_activa_prc'] > 30
+    assert prepared.report['imu_estado'] == 'no_valida' and prepared.report['imu_cobertura_presion_activa_prc'] < 80
     for method in (CALC.calcular_longitud_zancada, CALC.calcular_altura_zancada):
         assert method(prepared)['error_reason'] == 'ERR_IMU_STALE'
     # La cadencia sale de la presión y no se ve afectada, pero queda dicho que no se excluyeron giros.
@@ -251,9 +251,27 @@ def test_repeated_imu_with_the_pressure_active_is_a_gap_and_too_many_invalidate_
     assert cadence['cadencia_zancada'] == pytest.approx(60, abs=1) and cadence['giros_evaluados'] is False
 
 
+def test_a_slow_imu_that_repeats_values_without_gaps_is_valid():
+    """D03: una IMU que envía un valor nuevo cada 70 ms repite el 86 % de las filas, pero no tiene huecos."""
+    frame = walk(stride_m=1.0)
+    for start in range(0, len(frame), 7):                                  # 100 Hz: valor nuevo cada 7 filas
+        frame.loc[start + 1:start + 6, IMU] = frame.loc[start, IMU].to_numpy()
+    report = CALC.preparar(frame).report
+    assert report['imu_repeticion_presion_activa_prc'] > 80               # la regla anterior la rechazaba
+    assert report['imu_cobertura_presion_activa_prc'] == 100.0 and report['imu_estado'] == 'valida'
+
+
+def test_short_tests_have_their_own_minimum_of_active_pressure():
+    default = GaitMetricsCalculator()
+    frame = walk(seconds=6.0, stride_m=1.0)                                # un intento corto con el pie en movimiento
+    assert default.preparar(frame).report['imu_estado'] == 'no_evaluable'  # 30 s por defecto (6MWT, 2MWT)
+    t25fw = default.preparar(frame, 'T25FW').report
+    assert t25fw['imu_min_presion_activa_seg'] == 2.0 and t25fw['imu_estado'] == 'valida'
+
+
 def test_imu_needs_thirty_seconds_of_active_pressure_to_be_evaluated():
     default = GaitMetricsCalculator()
-    assert default.config.imu_min_active_s == 30.0 and default.config.imu_max_stale_active == 0.30
+    assert default.config.imu_min_active_s == 30.0 and default.config.imu_min_active_s_by_test == {'T25FW': 2.0}
     short = default.preparar(walk(stride_m=1.0))                           # 20 s: no se puede evaluar
     assert short.report['imu_estado'] == 'no_evaluable' and not short.report['imu_valida']
     result = default.calcular_longitud_zancada(short)
@@ -638,3 +656,20 @@ def test_heel_rhythm_is_measured_in_windows_and_only_those_without_it_are_exclud
     assert len(without) == 1 and without[0]['inicio_s'] == pytest.approx(20, abs=0.1) and without[0]['fin_s'] == pytest.approx(40, abs=0.1)
     assert not [c for c in result['contactos_s'] if 20.5 < c < 39.5]
     assert CALC.config.heel_rhythm_window_s == 20.0
+
+
+def test_stillness_at_each_flat_foot_is_measured_but_excludes_nothing():
+    """D15: indicador de quietud en los dos pies planos de cada zancada; se mide y se cuenta, no se excluye."""
+    frame = walk(stride_m=1.0)
+    prepared = CALC.preparar(frame)
+    before = CALC.calcular_longitud_zancada(prepared)['n_zancadas_longitud']
+    events, status, _reason = CALC._integrated_strides(prepared, True)
+    assert status == 'OK' and events
+    for event in events:
+        assert {'giro_min_apoyo_dps', 'quietud_acc_g', 'quietud_giro_dps', 'quietud_valores_nuevos', 'quieto_acc'} <= set(event)
+        assert event['quieto_acc'] == (event['quietud_acc_g'] <= CALC.config.rest_accel_tolerance_g)
+        assert event['quietud_valores_nuevos'] >= 3                         # 0,2 s a 100 Hz: unas 20 filas nuevas
+    # Que un pie plano no esté quieto no saca la zancada de la longitud (todavía).
+    moving = [event for event in events if not event['quieto_acc'] and not event['motivo_exclusion']]
+    assert CALC.calcular_longitud_zancada(prepared)['n_zancadas_longitud'] == before
+    assert all(np.isfinite(event['longitud_cm']) for event in moving)

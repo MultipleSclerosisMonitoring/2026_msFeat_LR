@@ -383,7 +383,7 @@ class GaitDataExtractor:
         test_type = test_type or self.config['batch']['test_type']
         trials, results = load_registry(
             self._registry_path(csv_path), test_type, ids, self.config.get('registry', {}).get('exclude_codeids'),
-            self.config.get('registry', {}).get('influx_time', 'civil'),
+            self.config['registry']['influx_time'],
         )
         manifest = Manifest(manifest_path_for(self._h5_database))
         completed = manifest.completed_keys() if missing_only else None
@@ -421,7 +421,7 @@ class GaitDataExtractor:
         """
         test_type = test_type or self.config['batch']['test_type']
         trials, _invalid = load_registry(self._registry_path(csv_path), test_type,
-                                         time_criterion=self.config.get('registry', {}).get('influx_time', 'civil'))
+                                         time_criterion=self.config['registry']['influx_time'])
         report = audit_store(self._h5_database, trials, Manifest(manifest_path_for(self._h5_database)))
         logger.info(
             _("INFO_AUDIT: {0} frente a {1} eventos del registro: {2} ausentes, {3} sin confirmar en el manifest, {4} claves huérfanas, {5} claves del esquema antiguo").format(self._h5_database, len(trials), len(report['missing']), len(report['unconfirmed']), len(report['orphan']), len(report['legacy']))

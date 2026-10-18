@@ -18,7 +18,12 @@ postgresql:
   # connect_timeout: 10         # opcional, en segundos; sin esta clave no se aplica timeout
 registry:
   exclude_codeids: []           # pacientes cuyos eventos no se procesan (quedan como EXCLUDED), p. ej. [AMIR-48]
-  influx_time: civil            # civil: hora de reloj del registro (R27); utc: instante real en UTC (pendiente de confirmar, D14)
+  # Cómo se buscan en InfluxDB las horas del registro (D14): civil (hora de reloj), utc (instante real en UTC)
+  # o una lista de periodos; cada evento usa el criterio del periodo de su fecha.
+  influx_time:
+    - criterio: civil           # antes de noviembre de 2025: sin comprobar (el registro no tiene eventos válidos)
+    - desde: '2025-11-01'
+      criterio: utc             # comprobado con 6MWT reales (scripts/comprobar_hora.py)
 paths:
   registry_csv: ../tests.csv
   output_folder: ../data/raw
@@ -42,8 +47,9 @@ processing:
   pressure_active_window_s: 1.0     # la presión está activa si en 1 s centrado en la muestra algún sensor varía...
   pressure_active_min_fraction: 0.25  # ...al menos el 25 % de su rango (p5-p95)...
   pressure_active_min_units: 20.0   # ...y al menos 20 unidades
-  imu_max_stale_active: 0.30    # IMU válida si repite valor en menos del 30 % de las filas con presión activa
-  imu_min_active_s: 30.0        # con menos de 30 s de presión activa la IMU no es evaluable y sus métricas no se calculan
+  imu_min_active_s: 30.0        # con menos de 30 s de presión activa la IMU no es evaluable (6MWT y 2MWT; IMU válida si con presión activa >= min_coverage del tiempo queda fuera de huecos)
+  imu_min_active_s_by_test:     # mínimo propio de las pruebas cortas
+    T25FW: 2.0                  # provisional: se medirá con las ventanas correctas (D14)
   min_coverage: 0.8             # fracción mínima del tiempo fuera de huecos, en la presión
   # --- Zancadas válidas mínimas, por prueba (en TUG no se informan métricas de marcha) ---
   # Una prueba que no figure aquí no informa métricas de marcha.
@@ -66,6 +72,7 @@ processing:
   # --- Orientación: gravedad estimada en reposo ---
   rest_gyro_quantile: 0.25      # fracción de muestras con menos giro candidatas a reposo
   rest_accel_tolerance_g: 0.1   # en reposo, el módulo de la aceleración está a esta distancia de 1 g
+  still_window_s: 0.2           # provisional: ventana de quietud en cada pie plano (>= 3 valores nuevos de la IMU); solo se mide, no excluye
   # --- Giros por ángulo acumulado ---
   turn_axis: vertical           # giro en torno a la vertical estimada (Gy si no se puede estimar); o un canal del giroscopio: Gx, Gy o Gz
   turn_smooth_cutoff_hz: 0.5    # quita la oscilación de cada zancada (provisional)
@@ -97,6 +104,9 @@ processing:
   stride_ok_min_cm: 30.0        # banda de plausibilidad de la longitud
   stride_ok_max_cm: 150.0
   t25fw_distance_m: 7.62        # 25 pies; solo para avisar si la suma de longitudes de un intento no cuadra (no valida ni calibra)
+  max_walking_speed_ms: 2.533   # T25FW o TUG más rápido no es plausible: velocidad máxima media del grupo más rápido de adultos sanos (Bohannon, 1997)
+  tug_walk_distance_m: 6.0      # distancia mínima que se camina en un TUG (3 m de ida y 3 de vuelta)
+  t25fw_max_s: 180.0            # límite por intento del T25FW (manual del MSFC, 2001)
   # MTC (Müller 2021). Con el módulo en el tobillo no se calcula; la banda queda para cuando pueda medirse.
   mtc_ok_min_cm: 0.4
   mtc_ok_max_cm: 5.5

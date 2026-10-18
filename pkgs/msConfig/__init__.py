@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -223,6 +224,34 @@ def _validate_influxdb(config: dict, path: Path) -> None:
         inf['ssl_ca_cert'] = str(bundle)
 
 
+DEFAULT_INFLUX_TIME = ({'criterio': 'civil'}, {'desde': '2025-11-01', 'criterio': 'utc'})
+
+
+def _validate_influx_time(setting: Any) -> None:
+    """Validate ``registry.influx_time``: ``civil``, ``utc`` or a list of periods."""
+    if isinstance(setting, str):
+        if setting not in ('civil', 'utc'):
+            raise ConfigError('registry.influx_time debe ser civil, utc o una lista de periodos {desde, criterio}.')
+        return
+    if not isinstance(setting, list) or not setting:
+        raise ConfigError('registry.influx_time debe ser civil, utc o una lista de periodos {desde, criterio}.')
+    previous = None
+    for position, period in enumerate(setting):
+        if not isinstance(period, dict) or period.get('criterio') not in ('civil', 'utc') or set(period) - {'desde', 'criterio'}:
+            raise ConfigError('Cada periodo de registry.influx_time necesita criterio (civil o utc) y, salvo el primero, desde.')
+        if 'desde' not in period:
+            if position:
+                raise ConfigError('Solo el primer periodo de registry.influx_time puede no tener desde.')
+            continue
+        try:
+            start = datetime.fromisoformat(str(period['desde']))
+        except (TypeError, ValueError):
+            raise ConfigError(f'registry.influx_time: fecha no válida en desde ({period["desde"]!r}).') from None
+        if previous is not None and start <= previous:
+            raise ConfigError('Los periodos de registry.influx_time deben ir en orden de fecha.')
+        previous = start
+
+
 def _validate_postgresql(config: dict) -> None:
     """Validate the ``postgresql`` connection section when it is loaded."""
     pg = config.get('postgresql')
@@ -271,10 +300,10 @@ def _validate_analysis(config: dict, path: Path) -> None:
     excluded = config.setdefault('registry', {}).setdefault('exclude_codeids', [])
     if not isinstance(excluded, list) or any(not isinstance(code, str) or not code.strip() for code in excluded):
         raise ConfigError('registry.exclude_codeids debe ser una lista de identificadores de paciente.')
-    # Cómo se buscan en InfluxDB las horas del registro: hora civil (R27, por defecto) o UTC (duda D14).
-    criterion = config['registry'].setdefault('influx_time', 'civil')
-    if criterion not in ('civil', 'utc'):
-        raise ConfigError('registry.influx_time debe ser civil o utc.')
+    # Cómo se buscan en InfluxDB las horas del registro (D14): un criterio único o uno por periodo.
+    # Por defecto, UTC desde noviembre de 2025 (comprobado con datos reales) y hora civil antes (sin comprobar).
+    setting = config['registry'].setdefault('influx_time', [dict(period) for period in DEFAULT_INFLUX_TIME])
+    _validate_influx_time(setting)
     batch = config.setdefault('batch', {})
     batch.setdefault('test_type', '6MWT')
     if not isinstance(batch['test_type'], str) or not batch['test_type'].strip():

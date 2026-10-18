@@ -122,8 +122,8 @@ class GaitPipeline:
             self.bucket = config["influxdb"]["bucket"]
             self.measurement = config["influxdb"]["measurement"]
         self.h5_path = config["paths"]["h5_path"]
-        # Cómo se buscan en InfluxDB las horas del registro (registry.influx_time): civil, según R27, o utc (D14).
-        self.time_criterion = config.get("registry", {}).get("influx_time", "civil")
+        # Cómo se buscan en InfluxDB las horas del registro (registry.influx_time, D14): único o por periodos.
+        self.time_criterion = config["registry"]["influx_time"]
 
         # Herramientas
         self.processing = ProcessingConfig.from_mapping(config.get("processing"))
@@ -149,9 +149,12 @@ class GaitPipeline:
             integrada y los valores por zancada que pueden juntarse entre intentos.
         """
         minimum = self._min_strides(trial.test_type)
-        prepared = self.calculator.preparar(df_side)
-        if trial.test_type in TESTS_WITHOUT_GAIT_METRICS or minimum is None:
-            if minimum is None and trial.test_type not in TESTS_WITHOUT_GAIT_METRICS:
+        prepared = self.calculator.preparar(df_side, trial.test_type)
+        plausible, plausibility_reason = self._duration_plausibility(trial)
+        if trial.test_type in TESTS_WITHOUT_GAIT_METRICS or minimum is None or plausible is False:
+            if plausible is False:
+                reason = plausibility_reason
+            elif minimum is None and trial.test_type not in TESTS_WITHOUT_GAIT_METRICS:
                 reason = f"no se informa: la prueba {trial.test_type} no tiene mínimo de zancadas definido (processing.min_strides)"
             else:
                 reason = f"no se informa en {trial.test_type}: la marcha estable es demasiado corta; su métrica es la duración"
@@ -194,10 +197,14 @@ class GaitPipeline:
             "cobertura_presion": coverage.get("presion", np.nan),
             "huecos_imu": report.get("huecos_por_grupo", {}).get("imu", np.nan),
             "huecos_presion": report.get("huecos_por_grupo", {}).get("presion", np.nan),
+            "duracion_plausible": plausible,
+            "motivo_duracion": plausibility_reason,
             "imu_valida": report.get("imu_valida", np.nan),
             "imu_estado": report.get("imu_estado", ""),
             "presion_activa_seg": report.get("presion_activa_seg", np.nan),
             "imu_repeticion_presion_activa_prc": report.get("imu_repeticion_presion_activa_prc", np.nan),
+            "imu_cobertura_presion_activa_prc": report.get("imu_cobertura_presion_activa_prc", np.nan),
+            "imu_min_presion_activa_seg": report.get("imu_min_presion_activa_seg", np.nan),
             "intervalos_recuperados": report.get("intervalos_recuperados", np.nan),
             "vertical_estimada": report.get("vertical_estimada", np.nan),
             "inclinacion_grados": report.get("inclinacion_grados", np.nan),
@@ -285,6 +292,10 @@ class GaitPipeline:
                     _("DEBUG_METRIC_STATUS: Evento {0} ({1}) {2}: {3} ({4})").format(trial.trial_id, side, name, metrics[f'estado_{name}'], metrics[f'motivo_{name}'])
                 )
         events = height_res.get("eventos", [])
+        # D15: cuántas zancadas integradas tienen el sensor quieto en sus dos pies planos (solo se cuenta).
+        integrated = [event for event in events if not event["motivo_exclusion"] and np.isfinite(event.get("quietud_acc_g", np.nan))]
+        metrics["zancadas_integradas"] = len(integrated)
+        metrics["zancadas_quietas_acc"] = sum(bool(event["quieto_acc"]) for event in integrated)
         pool = {
             "tiempos": cad_res.get("tiempos_zancada", []), "balanceos": fas_res.get("balanceos_ciclo_prc", []),
             "longitudes": [event["longitud_cm"] for event in events if not event["motivo_exclusion"]],
@@ -408,7 +419,8 @@ class GaitPipeline:
         """
         tt = trial.test_type
         identity = {"TrialID": trial.trial_id, "CodeID": trial.codeid, "test_type": tt}
-        wide: dict[str, Any] = {**identity, "d_from": trial.d_from, "d_until": trial.d_until, f"{tt}_duracion_seg": trial.duration_s}
+        wide: dict[str, Any] = {**identity, "d_from": trial.d_from, "d_until": trial.d_until, f"{tt}_duracion_seg": trial.duration_s,
+                                f"{tt}_duracion_plausible": self._duration_plausibility(trial)[0]}
         foot_rows: list[dict[str, Any]] = []
         cadences: dict[str, float] = {}
         strides: dict[str, tuple[float, float]] = {}
@@ -502,7 +514,12 @@ class GaitPipeline:
         """
         events = pd.DataFrame(wide_rows).drop(columns=["TrialID", "test_type", "d_from", "d_until"])
         states = [column for column in events.columns if any(column.endswith(f"_{state}") for state in set(METRIC_STATE.values()))]
-        metrics = events.drop(columns=["CodeID", *states]).apply(lambda x: pd.to_numeric(x, errors="coerce"))
+        flags = [column for column in events.columns if column.endswith("_duracion_plausible")]
+        metrics = events.drop(columns=["CodeID", *states, *flags]).apply(lambda x: pd.to_numeric(x, errors="coerce"))
+        # Una duración no plausible no entra en la media del paciente (en el TUG es su métrica); el ensayo sigue en el Excel.
+        for flag in flags:
+            duration = flag.replace("_duracion_plausible", "_duracion_seg")
+            metrics.loc[events[flag].eq(False).to_numpy(), duration] = np.nan
         patients = metrics.groupby(events["CodeID"], sort=False).mean()
         # Los WARNING entran en la media; se cuenta cuántos ensayos de cada prueba lo están.
         for test in sorted({row["test_type"] for row in wide_rows}):
@@ -593,6 +610,39 @@ class GaitPipeline:
                 _("DEBUG_REPEATED_TRIALS: Paciente {0} ({1}): eventos {2}; {3} bilaterales").format(row.CodeID, row.test_type, row.eventos, row.n_bilaterales)
             )
         return patients, trace
+
+    def _duration_plausibility(self, trial: Trial) -> tuple[bool | float, str]:
+        """Comprueba si la duración registrada de un T25FW o un TUG es físicamente posible.
+
+        La distancia del T25FW es fija y la del TUG tiene un mínimo, así que la
+        duración da una velocidad media. Si supera la velocidad máxima de
+        marcha documentada en adultos sanos (``max_walking_speed_ms``), el
+        registro no es plausible; en el T25FW tampoco lo es si supera el límite
+        por intento del manual del MSFC (``t25fw_max_s``). Nada se borra: el
+        ensayo queda en el Excel con el motivo y sin métricas de marcha. En el
+        6MWT y el 2MWT la duración la fija el protocolo y la cubre el aviso de
+        la ventana.
+
+        Args:
+            trial (Trial): Evento del registro.
+
+        Returns:
+            tuple[bool | float, str]: ``True`` o ``False``, o ``NaN`` si no se
+            comprueba en esa prueba, y el motivo cuando no es plausible.
+        """
+        cfg = self.processing
+        distance = {"T25FW": cfg.t25fw_distance_m, "TUG": cfg.tug_walk_distance_m}.get(trial.test_type)
+        if distance is None or not trial.duration_s > 0:
+            return np.nan, ""
+        speed = distance / trial.duration_s
+        if speed > cfg.max_walking_speed_ms:
+            return False, (f"ERR_VELOCIDAD_NO_PLAUSIBLE: velocidad_implicita_no_plausible: {distance:g} m en "
+                           f"{trial.duration_s:g} s son {speed:.2f} m/s, más que la máxima documentada en adultos sanos "
+                           f"({cfg.max_walking_speed_ms:g} m/s)")
+        if trial.test_type == "T25FW" and trial.duration_s > cfg.t25fw_max_s:
+            return False, (f"ERR_DURACION_SUPERA_LIMITE: {trial.duration_s:g} s superan el límite por intento del MSFC "
+                           f"({cfg.t25fw_max_s:g} s)")
+        return True, ""
 
     @staticmethod
     def _sessions(rows: list[dict[str, Any]], gap: pd.Timedelta) -> dict[str, str]:
@@ -884,12 +934,12 @@ class GaitPipeline:
         df_final = df_patients.astype(object).fillna("N/A")
         tests = sorted(df_events["test_type"].unique())
         quality_columns = [
-            "TrialID", "CodeID", "test_type", "Foot", "criterio_presion", "rango_talon", "periodicidad_talon", "ventanas_ritmo",
+            "TrialID", "CodeID", "test_type", "Foot", "duracion_plausible", "motivo_duracion", "criterio_presion", "rango_talon", "periodicidad_talon", "ventanas_ritmo",
             "ventanas_con_ritmo_prc",
             "cobertura_observada_presion", "cobertura_presion", "huecos_presion", "muestras_interpoladas", "muestras_retenidas",
-            "cobertura_observada_imu", "cobertura_imu", "muestras_repetidas_reposo", "imu_estado", "presion_activa_seg", "imu_repeticion_presion_activa_prc",
+            "cobertura_observada_imu", "cobertura_imu", "muestras_repetidas_reposo", "imu_estado", "presion_activa_seg", "imu_min_presion_activa_seg", "imu_cobertura_presion_activa_prc", "imu_repeticion_presion_activa_prc",
             "giros_excluidos", "zancadas_margen_giro", "n_huecos",
-            "intervalos_recuperados", "min_zancadas", "contactos_talon", "zancadas", "zancadas_en_banda_prc",
+            "intervalos_recuperados", "min_zancadas", "contactos_talon", "zancadas", "zancadas_en_banda_prc", "zancadas_integradas", "zancadas_quietas_acc",
             "estado_cadencia", "motivo_cadencia", "estado_zancada", "motivo_zancada",
             "t25fw_suma_longitudes_m", "t25fw_distancia_coherente",
         ]

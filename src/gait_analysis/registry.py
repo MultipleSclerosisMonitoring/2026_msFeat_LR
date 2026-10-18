@@ -7,7 +7,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from msTools.timeutils import experiment_wallclock, influx_time_z
+from msTools.timeutils import criterion_for, experiment_wallclock, influx_time_z
 from msTools.i18n import _
 
 logger = logging.getLogger("msGait.Registry")
@@ -144,7 +144,7 @@ def load_registry(
     test_type: str | None = None,
     ids: Iterable[str] | None = None,
     exclude_codeids: Iterable[str] | None = None,
-    time_criterion: str = "civil",
+    time_criterion: Any = "civil",
 ) -> tuple[list[Trial], list[TrialResult]]:
     """Lee y valida el registro completo antes de acceder a ninguna base de datos.
 
@@ -164,9 +164,10 @@ def load_registry(
         ids (Iterable[str] | None): Identificadores de evento a seleccionar.
             ``None`` selecciona todos.
         exclude_codeids (Iterable[str] | None): Pacientes cuyos eventos se excluyen.
-        time_criterion (str): ``civil`` (por defecto, R27) o ``utc``: cómo se
-            pasan las horas del registro a la escala de InfluxDB
-            (:func:`msTools.timeutils.influx_time`).
+        time_criterion (Any): ``civil``, ``utc`` o una lista de periodos
+            ``{desde, criterio}`` (``registry.influx_time``): cómo se pasan las
+            horas del registro a la escala de InfluxDB. Con periodos, cada
+            evento usa el de su fecha (:func:`msTools.timeutils.criterion_for`).
 
     Returns:
         tuple[list[Trial], list[TrialResult]]: Eventos válidos seleccionados y
@@ -221,10 +222,11 @@ def load_registry(
             continue
         start = experiment_wallclock(row["d_from"])
         stop = experiment_wallclock(row["d_until"])
+        criterion = criterion_for(row["d_from"], time_criterion)
         trials.append(Trial(
             row["id"], row["codeid"], row["t_code"], row["d_from"], row["d_until"],
-            influx_time_z(row["d_from"], time_criterion), influx_time_z(row["d_until"], time_criterion),
-            round((stop - start).total_seconds(), 2), time_criterion,
+            influx_time_z(row["d_from"], criterion), influx_time_z(row["d_until"], criterion),
+            round((stop - start).total_seconds(), 2), criterion,
         ))
 
     if wanted_ids is not None:

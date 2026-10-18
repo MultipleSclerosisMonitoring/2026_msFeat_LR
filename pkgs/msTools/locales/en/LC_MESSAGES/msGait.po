@@ -871,8 +871,8 @@ msgid "processing.decay_min_minutes debe estar entre 2 y el número de bloques d
 msgstr "processing.decay_min_minutes must be between 2 and the number of blocks of the trial."
 
 #: src/gait_analysis/metrics.py
-msgid "DEBUG_SIGNAL_QUALITY: IMU repetida con presión activa {0:.1f} % en {1:.0f} s (estado: {2}); {3} intervalos largos recuperados como recepción retrasada"
-msgstr "DEBUG_SIGNAL_QUALITY: IMU repeated with active pressure {0:.1f} % over {1:.0f} s (state: {2}); {3} long intervals recovered as delayed reception"
+msgid "DEBUG_SIGNAL_QUALITY: con presión activa durante {0:.0f} s (mínimo {1:g} s), IMU fuera de huecos {2:.1f} % y valores repetidos {3:.1f} % (estado: {4}); {5} intervalos largos recuperados como recepción retrasada"
+msgstr "DEBUG_SIGNAL_QUALITY: with active pressure for {0:.0f} s (minimum {1:g} s), IMU outside gaps {2:.1f} % and repeated values {3:.1f} % (state: {4}); {5} long intervals recovered as delayed reception"
 
 #: src/gait_analysis/query.py
 msgid "INFO_DUPLICATE_SAMPLES: Evento {0} ({1}): eliminadas {2} filas idénticas; {3} filas repiten _time con valores distintos y se conservan"
@@ -941,3 +941,7 @@ msgstr "Could not set aside {0}: {1}"
 #: src/gait_analysis/metrics.py
 msgid "DEBUG_SIGNAL_FILL: filas con valor nuevo: IMU {0:.0%}, presión {1:.0%}; {2} interpoladas, {3} retenidas (último valor repetido), {4} de IMU repetidas con el pie quieto"
 msgstr "DEBUG_SIGNAL_FILL: rows with a new value: IMU {0:.0%}, pressure {1:.0%}; {2} interpolated, {3} retained (last value repeated), {4} IMU rows repeated with the foot still"
+
+#: src/gait_analysis/metrics.py
+msgid "processing.imu_min_active_s_by_test debe asociar cada prueba a un número de segundos mayor que cero."
+msgstr "processing.imu_min_active_s_by_test must map each test to a number of seconds greater than zero."

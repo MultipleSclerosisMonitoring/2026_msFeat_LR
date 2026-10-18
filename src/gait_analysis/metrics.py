@@ -73,11 +73,13 @@ class ProcessingConfig:
             ventana algún sensor varía al menos esta fracción de su rango
             (percentil 95 menos percentil 5)...
         pressure_active_min_units (float): ...y al menos estas unidades.
-        imu_max_stale_active (float): La IMU de la serie es válida si repite
-            valor en menos de esta fracción de las filas con presión activa.
         imu_min_active_s (float): Tiempo mínimo de presión activa para poder
             evaluar la IMU; por debajo queda como no evaluable y sus métricas
-            no se calculan.
+            no se calculan. Se aplica a las pruebas que no figuran en
+            ``imu_min_active_s_by_test`` (6MWT y 2MWT: 30 s).
+        imu_min_active_s_by_test (Dict[str, float]): Mínimo de presión activa
+            propio de una prueba, para las que duran poco (T25FW: unos pocos
+            segundos; provisional hasta medirlo con las ventanas correctas, D14).
         max_interpolation_s (float): Tiempo máximo sin valor nuevo que se
             rellena en un grupo de sensores (IMU o presión): por interpolación
             lineal entre los valores vecinos o, al final de un tramo, repitiendo
@@ -124,6 +126,11 @@ class ProcessingConfig:
             a cada contacto de talón.
         rest_gyro_quantile (float): Fracción de muestras con menor giro que se
             consideran candidatas a reposo para estimar la gravedad.
+        still_window_s (float): Ventana centrada en cada pie plano en la que se
+            mide si el sensor está quieto (indicadores ``quietud_*`` de cada
+            zancada). Debe contener al menos tres valores nuevos de la IMU: con
+            unos 13 valores por segundo, 0,2 s. Provisional. Los indicadores se
+            informan y se cuentan, pero todavía no excluyen ninguna zancada.
         rest_accel_tolerance_g (float): En reposo el módulo de la aceleración
             debe estar a esta distancia de 1 g como máximo.
         turn_axis (str): ``vertical`` usa la velocidad de giro proyectada sobre
@@ -175,7 +182,20 @@ class ProcessingConfig:
         t25fw_distance_m (float): Distancia que se recorre en un intento del
             T25FW (25 pies). Solo sirve para avisar cuando la suma de las
             longitudes de zancada de un intento no es coherente con ella; no
-            valida ni calibra la longitud.
+            valida ni calibra la longitud. También da la velocidad implícita de
+            cada intento (``max_walking_speed_ms``).
+        max_walking_speed_ms (float): Velocidad por encima de la cual la
+            duración registrada de un T25FW o un TUG no es plausible: la
+            velocidad máxima media del grupo más rápido de adultos sanos
+            (hombres de 20 a 29 años, 253,3 cm/s; Bohannon RW. Comfortable and
+            maximum walking speed of adults aged 20-79 years. Age Ageing.
+            1997;26(1):15-19). El ensayo se conserva, sin métricas de marcha.
+        tug_walk_distance_m (float): Distancia mínima que se camina en un TUG
+            (3 m de ida y 3 de vuelta). Con ``max_walking_speed_ms`` da una
+            duración mínima prudente: levantarse, girar y sentarse no cuentan.
+        t25fw_max_s (float): Tiempo máximo por intento del T25FW según el
+            manual del MSFC (Fischer et al., National MS Society, revisión de
+            2001: «3 minutes (180 seconds) per trial»). El TUG no tiene máximo.
         mtc_ok_min_cm (float): Límite inferior de la distancia mínima punta-suelo
             (MTC) media de una serie. Reservado: la MTC no se calcula todavía.
         mtc_ok_max_cm (float): Límite superior de la MTC media de una serie.
@@ -192,8 +212,8 @@ class ProcessingConfig:
     pressure_active_window_s: float = 1.0
     pressure_active_min_fraction: float = 0.25
     pressure_active_min_units: float = 20.0
-    imu_max_stale_active: float = 0.30
     imu_min_active_s: float = 30.0
+    imu_min_active_s_by_test: Dict[str, float] = field(default_factory=lambda: {"T25FW": 2.0})
     min_coverage: float = 0.8
     min_strides: Dict[str, int] = field(default_factory=lambda: {"6MWT": 30, "2MWT": 10, "T25FW": 4})
     pooling_session_gap_s: float = 1800.0
@@ -208,6 +228,7 @@ class ProcessingConfig:
     heel_valley_prominence: float = 0.3
     rest_gyro_quantile: float = 0.25
     rest_accel_tolerance_g: float = 0.1
+    still_window_s: float = 0.2
     turn_axis: str = "vertical"
     turn_smooth_cutoff_hz: float = 0.5
     turn_threshold: float = 25.0
@@ -235,6 +256,9 @@ class ProcessingConfig:
     stride_ok_min_cm: float = 30.0
     stride_ok_max_cm: float = 150.0
     t25fw_distance_m: float = 7.62
+    max_walking_speed_ms: float = 2.533
+    tug_walk_distance_m: float = 6.0
+    t25fw_max_s: float = 180.0
     mtc_ok_min_cm: float = 0.4
     mtc_ok_max_cm: float = 5.5
     mtc_stride_max_cm: float = 6.0
@@ -248,7 +272,8 @@ class ProcessingConfig:
         """
         for item in fields(self):
             value = getattr(self, item.name)
-            if item.name in ("turn_axis", "heel_channel", "pressure_stance_is_low", "time_grid", "min_strides"):
+            if item.name in ("turn_axis", "heel_channel", "pressure_stance_is_low", "time_grid", "min_strides",
+                             "imu_min_active_s_by_test"):
                 continue
             zero_allowed = ("turn_min_duration_s", "turn_margin_before_strides", "turn_margin_after_strides", "skip_first_strides")
             if item.name in zero_allowed and value == 0 and not isinstance(value, bool):
@@ -276,7 +301,13 @@ class ProcessingConfig:
             raise ConfigError(_("processing.max_gap_s debe ser mayor que el intervalo nominal entre muestras."))
         if self.max_interpolation_s > self.max_gap_s:
             raise ConfigError(_("processing.max_interpolation_s no puede ser mayor que processing.max_gap_s."))
-        for name in ("min_coverage", "rest_gyro_quantile", "reception_min_fraction", "imu_max_stale_active",
+        if not isinstance(self.imu_min_active_s_by_test, dict) or any(
+            not isinstance(test, str) or isinstance(value, bool) or not isinstance(value, (int, float))
+            or not np.isfinite(value) or value <= 0
+            for test, value in self.imu_min_active_s_by_test.items()
+        ):
+            raise ConfigError(_("processing.imu_min_active_s_by_test debe asociar cada prueba a un número de segundos mayor que cero."))
+        for name in ("min_coverage", "rest_gyro_quantile", "reception_min_fraction",
                      "pressure_active_min_fraction", "heel_min_periodicity", "heel_valley_prominence"):
             if getattr(self, name) > 1:
                 raise ConfigError(_("processing.{0} debe estar entre 0 y 1.").format(name))
@@ -732,7 +763,7 @@ class GaitMetricsCalculator:
             real = long & ~late
         return real, int((long & late).sum())
 
-    def preparar(self, df: pd.DataFrame) -> PreparedSignal:
+    def preparar(self, df: pd.DataFrame, test_type: str | None = None) -> PreparedSignal:
         """Valida el tiempo, mide la frecuencia efectiva y trata los huecos.
 
         Exige la columna ``_time``, ordena si hace falta y corta la serie en
@@ -750,9 +781,13 @@ class GaitMetricsCalculator:
         los valores nuevos (:meth:`_fill_group`): en la presión siempre, y en
         la IMU solo con la presión activa (:meth:`_pressure_active`), porque con
         el pie quieto el valor repetido es una medida válida. La IMU de la serie
-        es válida si, con la presión activa, repite valor en menos de
-        ``imu_max_stale_active`` de las filas; si no hay al menos
-        ``imu_min_active_s`` de presión activa no se puede evaluar. Con
+        es válida si, con la presión activa, al menos ``min_coverage`` del
+        tiempo queda fuera de huecos: la misma regla y la misma definición de
+        hueco que la presión. No cuenta cuántas filas repiten valor, porque la
+        IMU de algunos calcetines envía valores nuevos a menor ritmo que la
+        presión (unos 13 por segundo frente a unas 50 filas) y repetir es
+        normal. Si no hay al menos ``imu_min_active_s`` de presión activa (o el
+        de la prueba en ``imu_min_active_s_by_test``) no se puede evaluar. Con
         ``time_grid: uniform`` se conservan las filas que repiten marca de
         tiempo (dos muestras reales recibidas juntas). Nada se sustituye por cero.
         Por último estima la gravedad en reposo y añade la aceleración vertical
@@ -841,7 +876,8 @@ class GaitMetricsCalculator:
                 coverage[channel] = coverage["presion"]
 
         # --- IMU: se juzga con la presión, que es independiente del giroscopio ---
-        stale_active, imu_state, active_s = float("nan"), IMU_NOT_EVALUABLE, 0.0
+        stale_active, imu_state, active_s, imu_active_coverage = float("nan"), IMU_NOT_EVALUABLE, 0.0, float("nan")
+        minimum_active = cfg.imu_min_active_s_by_test.get(test_type, cfg.imu_min_active_s)
         present = [channel for channel in IMU_CHANNELS if channel in numeric]
         if present:
             raw = np.column_stack([numeric[c] for c in present])
@@ -855,8 +891,11 @@ class GaitMetricsCalculator:
             group_gaps["imu"] = n_gaps
             coverage["imu"] = round(float(1 - np.isnan(values).any(axis=1).mean()), 4)
             stale_active = float((held & active).sum() / active.sum()) if active.any() else float("nan")
-            if active_s >= cfg.imu_min_active_s:
-                imu_state = IMU_VALID if stale_active < cfg.imu_max_stale_active else IMU_INVALID
+            # Fracción del tiempo con presión activa que queda fuera de huecos de la IMU.
+            if active.any():
+                imu_active_coverage = float(1 - np.isnan(values[active]).any(axis=1).mean())
+            if active_s >= minimum_active:
+                imu_state = IMU_VALID if imu_active_coverage >= cfg.min_coverage else IMU_INVALID
             for position, channel in enumerate(present):
                 data[channel] = values[:, position]
                 coverage[channel] = coverage["imu"]
@@ -875,6 +914,8 @@ class GaitMetricsCalculator:
             "intervalos_recuperados": recovered, "imu_valida": imu_state == IMU_VALID, "imu_estado": imu_state,
             "presion_activa_seg": round(active_s, 1),
             "imu_repeticion_presion_activa_prc": round(100 * stale_active, 1),
+            "imu_cobertura_presion_activa_prc": round(100 * imu_active_coverage, 1),
+            "imu_min_presion_activa_seg": minimum_active,
             "exposicion_seg": round(duration - gap_time, 3), "cobertura": coverage, "huecos_por_grupo": group_gaps,
             "muestras_interpoladas": interpolated, "muestras_retenidas": retained,
             "muestras_repetidas_reposo": rest_repeated, "cobertura_observada": observed,
@@ -891,9 +932,11 @@ class GaitMetricsCalculator:
         logger.debug(_("DEBUG_SIGNAL_GROUPS: cobertura IMU {0:.0%} ({1} huecos), cobertura presión {2:.0%} ({3} huecos), inclinación respecto a Ay {4:.0f} grados (vertical estimada: {5})").format(
             coverage.get("imu", float("nan")), group_gaps.get("imu", 0), coverage.get("presion", float("nan")),
             group_gaps.get("presion", 0), tilt, direction is not None))
-        logger.debug(_("DEBUG_SIGNAL_QUALITY: IMU repetida con presión activa {0:.1f} % en {1:.0f} s (estado: {2}); {3} intervalos largos recuperados como recepción retrasada").format(
-            100 * stale_active, active_s, imu_state, recovered))
+        logger.debug(_("DEBUG_SIGNAL_QUALITY: con presión activa durante {0:.0f} s (mínimo {1:g} s), IMU fuera de huecos {2:.1f} % y valores repetidos {3:.1f} % (estado: {4}); {5} intervalos largos recuperados como recepción retrasada").format(
+            active_s, minimum_active, 100 * imu_active_coverage, 100 * stale_active, imu_state, recovered))
         prepared = PreparedSignal(t=t, data=data, segment=segment, dt=dt, fs=fs, report=report)
+        # Filas con un valor nuevo de la IMU: para comprobar que la ventana de quietud tiene medidas reales.
+        prepared.cache["imu_nuevo"] = ~held if present else np.zeros(len(t), dtype=bool)
         if cfg.turn_smooth_cutoff_hz >= fs / 2:
             prepared.error = "ERR_CUTOFF_ABOVE_NYQUIST"
         return prepared
@@ -911,7 +954,7 @@ class GaitMetricsCalculator:
         if inertial and not prepared.report.get("imu_valida", False):
             if prepared.report.get("imu_estado") == IMU_NOT_EVALUABLE:
                 return "ERR_IMU_NOT_EVALUABLE: presión activa insuficiente para evaluar la IMU"
-            # La IMU repite demasiados valores mientras la presión está activa.
+            # Con la presión activa, la IMU pasa demasiado tiempo en huecos (sin valores nuevos).
             return "ERR_IMU_STALE"
         low = [c for c in channels if c not in inertial and prepared.report["cobertura"][c] < self.config.min_coverage]
         if low:
@@ -1500,6 +1543,16 @@ class GaitMetricsCalculator:
         acc = prepared.data[["Ax", "Ay", "Az"]].to_numpy(dtype=float)
         gyr = prepared.data[["Gx", "Gy", "Gz"]].to_numpy(dtype=float)
         gyro_norm = np.linalg.norm(gyr, axis=1)
+        accel_norm = np.linalg.norm(acc, axis=1)
+        fresh = prepared.cache.get("imu_nuevo", np.ones(len(prepared.t), dtype=bool))
+        half = max(1, self.seconds_to_samples(cfg.still_window_s, prepared.fs) // 2)
+
+        def stillness(index: int) -> tuple[float, float, int]:
+            """Desvío máximo de |a| respecto a 1 g, giro máximo y valores nuevos de la IMU en la ventana."""
+            part = slice(max(0, index - half), index + half + 1)
+            return (float(np.nanmax(np.abs(accel_norm[part] - 1.0))), float(np.nanmax(gyro_norm[part])),
+                    int(fresh[part].sum()))
+
         ground = states["suelo"]
         tolerance = prepared.dt / 2
         events: list[Dict[str, Any]] = []
@@ -1516,6 +1569,15 @@ class GaitMetricsCalculator:
                 "longitud_cm": float("nan"), "excursion_tobillo_cm": float("nan"), "altura_minima_cm": float("nan"),
                 "motivo_exclusion": "", "motivo_altura": MTC_NOT_COMPUTABLE,
             }
+            # D15: ¿está quieto el sensor en los dos pies planos donde se impone velocidad nula? Solo se mide.
+            ends = [stillness(first), stillness(second)]
+            event.update({
+                "giro_min_apoyo_dps": round(float(max(gyro_norm[first], gyro_norm[second])), 2),
+                "quietud_acc_g": round(max(end[0] for end in ends), 4),
+                "quietud_giro_dps": round(max(end[1] for end in ends), 2),
+                "quietud_valores_nuevos": min(end[2] for end in ends),
+            })
+            event["quieto_acc"] = bool(event["quietud_acc_g"] <= cfg.rest_accel_tolerance_g)
             events.append(event)
             if turning[first:second + 1].any():
                 event["motivo_exclusion"] = "en_giro"

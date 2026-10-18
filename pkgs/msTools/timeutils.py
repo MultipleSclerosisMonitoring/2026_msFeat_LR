@@ -61,6 +61,35 @@ def influx_time(ts, criterion="civil"):
     raise ValueError(f"Criterio horario desconocido: {criterion!r} (admitidos: {', '.join(TIME_CRITERIA)})")
 
 
+def criterion_for(ts, setting="civil"):
+    """Elige el criterio horario de una hora del registro según su fecha.
+
+    Args:
+        ts: Hora del registro.
+        setting: ``civil``, ``utc`` o una lista de periodos ``{"desde": fecha,
+            "criterio": civil|utc}`` en orden. Cada periodo rige desde su fecha
+            (hora civil del registro) hasta el siguiente; el primero puede no
+            tener ``desde`` y rige desde el principio.
+
+    Returns:
+        str: ``civil`` o ``utc``.
+
+    Raises:
+        ValueError: Si la fecha es anterior a todos los periodos definidos.
+    """
+    if isinstance(setting, str):
+        return setting
+    moment = experiment_wallclock(ts)
+    chosen = None
+    for period in setting:
+        start = period.get("desde")
+        if start is None or moment >= pd.Timestamp(start):
+            chosen = period["criterio"]
+    if chosen is None:
+        raise ValueError(f"Ningún periodo de registry.influx_time cubre {moment}")
+    return chosen
+
+
 def influx_time_z(ts, criterion="civil"):
     """Formatea una hora del registro para ``range()`` de Flux según el criterio.
 

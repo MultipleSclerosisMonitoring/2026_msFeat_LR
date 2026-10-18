@@ -855,12 +855,28 @@ def test_registry_times_follow_the_configured_criterion(tmp_path, registry, civi
 def test_influx_time_option_is_validated(tmp_path):
     from msConfig import ConfigError
     config = write_config(tmp_path, write_csv(tmp_path, ROWS))
-    assert load_config(config)['registry']['influx_time'] == 'civil'
+    assert load_config(config)['registry']['influx_time'] == [{'criterio': 'civil'}, {'desde': '2025-11-01', 'criterio': 'utc'}]
     data = yaml.safe_load(config.read_text())
     data['registry'] = {'influx_time': 'madrid'}
     config.write_text(yaml.safe_dump(data))
     with pytest.raises(ConfigError, match='influx_time'):
         load_config(config)
+    for wrong in ([{'desde': '2026-01-01', 'criterio': 'utc'}, {'desde': '2025-01-01', 'criterio': 'civil'}],   # desordenados
+                  [{'criterio': 'civil'}, {'criterio': 'utc'}],                                             # sin desde
+                  [{'desde': 'ayer', 'criterio': 'utc'}]):
+        data['registry'] = {'influx_time': wrong}
+        config.write_text(yaml.safe_dump(data))
+        with pytest.raises(ConfigError, match='influx_time'):
+            load_config(config)
+
+
+def test_each_event_uses_the_criterion_of_its_period(tmp_path):
+    periods = [{'criterio': 'civil'}, {'desde': '2025-11-01', 'criterio': 'utc'}]
+    path = write_csv(tmp_path, [('1', 'PAT-1', '2025-10-31 19:24:00+01', '2025-10-31 19:30:00+01', '6MWT'),
+                                ('2', 'PAT-1', '2025-11-01 19:24:00+01', '2025-11-01 19:30:00+01', '6MWT')])
+    before, after = load_registry(str(path), time_criterion=periods)[0]
+    assert (before.time_criterion, before.start_iso) == ('civil', '2025-10-31T19:24:00Z')
+    assert (after.time_criterion, after.start_iso) == ('utc', '2025-11-01T18:24:00Z')
 
 
 def test_signals_downloaded_with_another_time_criterion_are_not_reused(tmp_path, caplog):
@@ -888,3 +904,41 @@ def test_signals_downloaded_with_another_time_criterion_are_not_reused(tmp_path,
     assert 'start: 2025-01-01T09:00:00' in query
     provenance = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name='Procedencia').set_index('clave')['valor']
     assert provenance['criterio_hora_influx'] == 'utc'
+
+
+# --- D16: duración no plausible por velocidad implícita ---------------------------------
+
+def test_implausible_durations_are_kept_without_gait_metrics(tmp_path):
+    from gait_analysis.pipeline import GaitPipeline
+    rows = [
+        ('61', 'PAT-1', '2025-01-01 10:00:00+01', '2025-01-01 10:00:00.920+01', 'T25FW'),   # 8,3 m/s
+        ('62', 'PAT-1', '2025-01-01 10:01:00+01', '2025-01-01 10:01:00.930+01', 'TUG'),     # 6,5 m/s
+        ('63', 'PAT-1', '2025-01-01 10:02:00+01', '2025-01-01 10:02:12+01', 'TUG'),          # 0,5 m/s
+        ('64', 'PAT-1', '2025-01-01 10:05:00+01', '2025-01-01 10:05:05+01', 'T25FW'),        # 1,5 m/s
+    ]
+    config = write_config(tmp_path, write_csv(tmp_path, rows))
+    responses = [[step_signal('Left', 1, '2025-01-01 10:00:00')], [step_signal('Left', 1, '2025-01-01 10:01:00')],
+                 [step_signal('Left', 12, '2025-01-01 10:02:00')], [step_signal('Left', 5, '2025-01-01 10:05:00')]]
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client(responses)):
+        GaitPipeline(str(config)).run_from_csv(test_type='all')
+    book = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name=None)
+    trials = book['Ensayos'].set_index('TrialID')
+    # Nada se borra: los cuatro ensayos siguen en el Excel, con su motivo escrito.
+    assert sorted(trials.index) == [61, 62, 63, 64]
+    assert not bool(trials.loc[61, 'duracion_plausible']) and 'velocidad_implicita_no_plausible' in trials.loc[61, 'motivo_duracion']
+    assert trials.loc[61, 'estado_cadencia'] == 'NO_APLICA' and 'velocidad_implicita_no_plausible' in trials.loc[61, 'motivo_cadencia']
+    assert not bool(trials.loc[62, 'duracion_plausible'])
+    assert bool(trials.loc[63, 'duracion_plausible']) and bool(trials.loc[64, 'duracion_plausible'])
+    # La duración no plausible del TUG no entra en la media del paciente; la plausible, sí.
+    patients = book['Datos_Pacientes'].replace('N/A', np.nan)
+    assert patients.loc[0, 'TUG_duracion_seg'] == pytest.approx(12.0)
+
+
+def test_t25fw_longer_than_the_msfc_limit_is_flagged(tmp_path):
+    from gait_analysis.pipeline import GaitPipeline
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    pipeline = GaitPipeline(str(config), offline=True)
+    slow = Trial('70', 'PAT-1', 'T25FW', 'a', 'b', 'x', 'y', 200.0)
+    plausible, reason = pipeline._duration_plausibility(slow)
+    assert plausible is False and reason.startswith('ERR_DURACION_SUPERA_LIMITE')
+    assert pipeline._duration_plausibility(Trial('71', 'PAT-1', '6MWT', 'a', 'b', 'x', 'y', 1.0))[1] == ''
