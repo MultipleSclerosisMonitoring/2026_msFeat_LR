@@ -30,7 +30,6 @@ MIN_N_CORRELATION = 10
 FDR_ALPHA = 0.05
 # El índice de simetría implementado toma valores entre 0 y 200 %.
 SYMMETRY_RANGE = (0.0, 200.0)
-SYMMETRY_REFERENCE = 10.0
 FOOT_COLORS = {"Left": "#1f77b4", "Right": "#d95f02"}
 
 
@@ -307,19 +306,23 @@ class GaitVisualizer:
             self._save(out_file, f"Un valor por paciente (media de sus ensayos con valor). Columnas con n >= {MIN_N_DESCRIPTIVE}. "
                                  f"Punto hueco: algún ensayo del paciente con esta métrica en WARNING ({warned_total} valores).")
 
-    def plot_dynamic_kde_asymmetry(self) -> None:
-        """Genera histogramas KDE del índice de simetría sobre todo su rango válido.
+    def plot_dynamic_asymmetry(self) -> None:
+        """Dibuja el índice de simetría de cada paciente como un gráfico de puntos.
 
-        El eje cubre de 0 a 200 %, que es el rango del índice implementado, de
-        modo que ningún valor queda fuera. Se anota cuántos pacientes no tienen
-        asimetría calculable. La línea del 10 % es una referencia visual sin
-        significado clínico acreditado.
+        Con pocos pacientes un histograma o una curva de densidad no describen
+        nada, así que se dibuja un punto por paciente, ordenados de menor a
+        mayor y sin su identificador, con la mediana como línea de referencia.
+        El eje se ajusta a los datos (desde 0 hasta algo más que el máximo)
+        dentro del rango del índice implementado (0-200 %), de modo que ningún
+        valor queda fuera. No se dibuja ningún umbral: no hay referencia
+        bibliográfica para la simetría de la cadencia de zancada. Se anota
+        cuántos pacientes no tienen asimetría calculable.
         """
         if self.df is None:
             return
 
         cols_asim = [c for c in self.df.columns if c.endswith(f"_{SYMMETRY_METRIC}")]
-        out_subfolder = os.path.join(self.out_dir, "asimetria_kde")
+        out_subfolder = os.path.join(self.out_dir, "asimetria")
         os.makedirs(out_subfolder, exist_ok=True)
 
         for col in cols_asim:
@@ -331,19 +334,27 @@ class GaitVisualizer:
 
             # Filtro QA: Muestra estadística mínima
             if len(data_clean) < MIN_N_DESCRIPTIVE:
-                logger.debug(_("DEBUG_PLOT_SKIP: Omitiendo KDE para {c} por falta de datos (n={n})").format(c=col, n=len(data_clean)))
+                logger.debug(_("DEBUG_PLOT_SKIP: Omitiendo la asimetría de {c} por falta de datos (n={n})").format(c=col, n=len(data_clean)))
                 continue
 
-            plt.figure(figsize=(8, 6))
-            sns.histplot(data_clean, kde=True, bins=40, binrange=SYMMETRY_RANGE, color="coral")
-            plt.title(_("Distribución de Asimetría - {t}").format(t=test_name))
+            values = np.sort(data_clean.to_numpy(dtype=float))
+            positions = np.arange(1, len(values) + 1)
+            median = float(np.median(values))
+            plt.figure(figsize=(8, max(3.5, 0.45 * len(values) + 1.5)))
+            plt.hlines(positions, SYMMETRY_RANGE[0], values, color="#c9d3dd", linewidth=1)
+            plt.scatter(values, positions, s=45, color="#1f77b4", zorder=3)
+            # Separador decimal del idioma activo: coma en español, punto en el catálogo inglés.
+            shown = f"{median:.1f}".replace(".", _(","))
+            plt.axvline(x=median, color='#52606d', linestyle=':', label=_("Mediana ({0} %)").format(shown))
+            plt.title(_("Índice de simetría por paciente - {t}").format(t=test_name))
             plt.xlabel(_("Índice de Simetría (%)"))
-            plt.ylabel(_("Frecuencia"))
-            plt.axvline(x=SYMMETRY_REFERENCE, color='#52606d', linestyle='--', label=_("Referencia (10 %)"))
-            plt.xlim(*SYMMETRY_RANGE)
-            plt.legend()
+            plt.ylabel(_("Pacientes, de menor a mayor índice"))
+            plt.yticks([])
+            plt.ylim(0.4, len(values) + 0.6)
+            plt.xlim(SYMMETRY_RANGE[0], min(SYMMETRY_RANGE[1], max(5.0, 1.15 * float(values.max()))))
+            plt.legend(loc="lower right")
 
-            out_file = os.path.join(out_subfolder, f"kde_asimetria_{test_name}.png")
+            out_file = os.path.join(out_subfolder, f"asimetria_{test_name}.png")
             self._save(
                 out_file,
                 f"Un valor por paciente. n = {len(data_clean)} con asimetría calculada; {not_computable} de {with_test} "
@@ -451,7 +462,7 @@ class GaitVisualizer:
         logger.info(_("INFO_START_PLOTTING: Generando batería dinámica de gráficas..."))
         if self.load_data():
             self.plot_dynamic_boxplots()
-            self.plot_dynamic_kde_asymmetry()
+            self.plot_dynamic_asymmetry()
             self.plot_dynamic_correlation_matrices()
             self.plot_dynamic_scatter()
             logger.info(_("INFO_END_PLOTTING: Proceso finalizado. Gráficas estructuradas por carpetas."))

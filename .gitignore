@@ -239,3 +239,6 @@ informe/*.synctex.gz
 informe/*.fls
 informe/*.fdb_latexmk
 informe/tfg_modelo.pdf
+
+# TFG de ejemplo de otros autores (solo consulta local)
+informe/ejemplos/

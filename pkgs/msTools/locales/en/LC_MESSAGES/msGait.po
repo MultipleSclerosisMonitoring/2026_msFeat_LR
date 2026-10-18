@@ -503,10 +503,6 @@ msgid "Índice de Simetría (%)"
 msgstr "Symmetry index (%)"
 
 #: graficas_tfg.py
-msgid "Frecuencia"
-msgstr "Count"
-
-#: graficas_tfg.py
 msgid "Cadencia (por minuto)"
 msgstr "Cadence (per minute)"
 
@@ -531,10 +527,6 @@ msgid "DEBUG_PLOT_SAVED: {f}"
 msgstr "DEBUG_PLOT_SAVED: {f}"
 
 #: graficas_tfg.py
-msgid "Referencia (10 %)"
-msgstr "Reference (10 %)"
-
-#: graficas_tfg.py
 msgid "Pie"
 msgstr "Foot"
 
@@ -551,10 +543,6 @@ msgid "Distribución de {t} entre Pruebas Clínicas"
 msgstr "Distribution of {t} across clinical tests"
 
 #: graficas_tfg.py
-msgid "Distribución de Asimetría - {t}"
-msgstr "Asymmetry distribution - {t}"
-
-#: graficas_tfg.py
 msgid "DEBUG_CORRELATION_PAIRS: {0}: {1} de {2} pares calculados (n >= {3}); {4} con FDR < {5}"
 msgstr "DEBUG_CORRELATION_PAIRS: {0}: {1} of {2} pairs computed (n >= {3}); {4} with FDR < {5}"
 
@@ -569,10 +557,6 @@ msgstr "ERR_DATA_LOAD: Failed to load data - {err}"
 #: graficas_tfg.py
 msgid "DEBUG_PLOT_SKIP: Boxplot de {0}: columnas con n < {1} omitidas: {2}"
 msgstr "DEBUG_PLOT_SKIP: Boxplot of {0}: columns with n < {1} skipped: {2}"
-
-#: graficas_tfg.py
-msgid "DEBUG_PLOT_SKIP: Omitiendo KDE para {c} por falta de datos (n={n})"
-msgstr "DEBUG_PLOT_SKIP: Skipping KDE for {c}: not enough data (n={n})"
 
 #: graficas_tfg.py
 msgid "DEBUG_PLOT_SKIP: Omitiendo correlación para {t} por falta de datos completos (n={n})"
@@ -913,3 +897,23 @@ msgstr "processing.heel_rhythm_window_s must be at least twice processing.cycle_
 #: src/gait_analysis/pipeline.py
 msgid "WARN_T25FW_DISTANCE: Evento {0} ({1}): las {2} zancadas integradas suman {3:.2f} m; para los {4:g} m del T25FW se espera entre {5:.2f} y {4:g} m. Es un aviso: la longitud de zancada no está validada con una referencia."
 msgstr "WARN_T25FW_DISTANCE: Event {0} ({1}): the {2} integrated strides add up to {3:.2f} m; for the {4:g} m of the T25FW between {5:.2f} and {4:g} m is expected. This is a warning: stride length is not validated against a reference."
+
+#: src/gait_analysis/plots.py
+msgid "DEBUG_PLOT_SKIP: Omitiendo la asimetría de {c} por falta de datos (n={n})"
+msgstr "DEBUG_PLOT_SKIP: Skipping asymmetry for {c}: not enough data (n={n})"
+
+#: src/gait_analysis/plots.py
+msgid ","
+msgstr "."
+
+#: src/gait_analysis/plots.py
+msgid "Mediana ({0} %)"
+msgstr "Median ({0} %)"
+
+#: src/gait_analysis/plots.py
+msgid "Índice de simetría por paciente - {t}"
+msgstr "Symmetry index per patient - {t}"
+
+#: src/gait_analysis/plots.py
+msgid "Pacientes, de menor a mayor índice"
+msgstr "Patients, from lowest to highest index"

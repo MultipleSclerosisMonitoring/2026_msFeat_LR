@@ -90,7 +90,7 @@ def test_figures_and_correlation_table_are_generated(tmp_path, caplog):
     assert strong['n'] == 14 and strong['rho'] == -1.0 and bool(strong['significativo_fdr'])
     assert table.loc[table['rho'].notna(), 'p_fdr'].ge(table.loc[table['rho'].notna(), 'p'] - 1e-12).all()
 
-    for name in ('correlaciones/correlacion_TUG.png', 'asimetria_kde/kde_asimetria_TUG.png',
+    for name in ('correlaciones/correlacion_TUG.png', 'asimetria/asimetria_TUG.png',
                  'dispersion/scatter_TUG.png', 'boxplots/boxplot_cadencia.png'):
         assert (out / name).stat().st_size > 10_000
     # La altura solo tiene 5 pacientes: se dibuja en el boxplot (n >= 3) pero no en correlaciones.
@@ -117,3 +117,22 @@ def test_old_format_workbook_is_rejected_with_a_clear_message(tmp_path, caplog):
     with caplog.at_level(logging.ERROR, logger='msGait'):
         assert visualizer.load_data() is False
     assert 'ERR_DATA_FORMAT' in caplog.text and 'Ensayos' in caplog.text
+
+
+def test_asymmetry_is_one_point_per_patient_without_threshold(tmp_path, monkeypatch):
+    import matplotlib.pyplot as plt
+    lines, limits = [], []
+    original_axvline, original_xlim = plt.axvline, plt.xlim
+    monkeypatch.setattr(plt, 'axvline', lambda *a, **k: lines.append((k.get('x'), k.get('label'))) or original_axvline(*a, **k))
+    monkeypatch.setattr(plt, 'xlim', lambda *a, **k: limits.append(a) or original_xlim(*a, **k))
+    visualizer = GaitVisualizer(str(write_book(tmp_path / 'dataset.xlsx')), str(tmp_path / 'figuras'))
+    assert visualizer.load_data()
+    visualizer.plot_dynamic_asymmetry()
+
+    values = [150.0, *range(1, 12)]
+    # Solo la mediana: no se dibuja ningún umbral sin referencia bibliográfica.
+    assert lines == [(pytest.approx(float(np.median(values))), 'Mediana (6,5 %)')]
+    # El eje se ajusta a los datos sin dejar ningún valor fuera.
+    low, high = limits[-1]
+    assert low == 0 and max(values) < high <= 200
+    assert (tmp_path / 'figuras' / 'asimetria' / 'asimetria_TUG.png').stat().st_size > 10_000

@@ -1433,8 +1433,8 @@ class GaitMetricsCalculator:
         quieto) al del apoyo siguiente. Solo se integran zancadas con la IMU y
         la presión válidas de principio a fin, fuera de giros y con duración
         dentro de la banda de zancada; las próximas a un giro se excluyen
-        como en la cadencia. El módulo va en la caña del calcetín,
-        sobre el tobillo: la trayectoria vertical integrada es la del tobillo y
+        como en la cadencia. El módulo va en la caña del calcetín, a la
+        altura del tobillo: la trayectoria vertical integrada es la del tobillo y
         su máximo en el balanceo es la excursión vertical del tobillo. La
         distancia mínima punta-suelo (MTC) exige un sensor en el antepié o
         trasladar la trayectoria a la punta, así que queda vacía con su motivo.
@@ -1556,7 +1556,7 @@ class GaitMetricsCalculator:
         the detection of gait disturbances and fatigue at early stages of
         multiple sclerosis. BMC Neurol. 2021;21:337.
         doi:10.1186/s12883-021-02361-y) se mide allí con el sensor en el
-        antepié. Aquí el módulo va en la caña del calcetín, sobre el tobillo:
+        antepié. Aquí el módulo va en la caña del calcetín, a la altura del tobillo:
         la trayectoria integrada es la del tobillo y, sin trasladarla a la
         punta, la MTC no puede calcularse. Por eso ``altura_minima_cm`` se
         devuelve vacía con su motivo y las bandas de la MTC (``mtc_ok_*``) no
