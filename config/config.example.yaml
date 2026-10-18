@@ -33,8 +33,8 @@ processing:
   time_grid: uniform            # uniform: muestras recolocadas a paso constante | received: marcas tal como llegaron
   fs_tolerance: 0.10            # desviación relativa admitida frente a la nominal
   # --- Huecos y cobertura, por grupo de sensores (IMU y presión) ---
-  max_gap_s: 0.1                # hueco = más de 100 ms sin un valor nuevo (en la IMU, solo con el pie en movimiento)
-  max_interpolation_s: 0.1      # hasta ese mismo umbral se interpola; por encima se corta
+  max_gap_s: 0.1                # la serie se corta en tramos si dos filas seguidas se separan más de 100 ms
+  max_interpolation_s: 0.1      # relleno máximo sin valor nuevo en cada grupo (IMU solo con el pie en movimiento); por encima, hueco del grupo
   reception_window_s: 0.2       # tras un intervalo largo entre filas se cuentan las muestras de los 200 ms siguientes...
   reception_min_fraction: 0.9   # ...y si llega el 90 % de las esperadas es recepción retrasada, no un hueco
   # Calidad de la IMU: se juzga con la presión, que es independiente del giroscopio.

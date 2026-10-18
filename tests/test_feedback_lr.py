@@ -743,3 +743,54 @@ def test_turn_axis_only_accepts_angular_velocity(axis, accepted):
     else:
         with pytest.raises(ConfigError, match='turn_axis'):
             ProcessingConfig.from_mapping({'turn_axis': axis})
+
+
+# --- Feedback del tutor del 18/10/2026: cálculo (fase 2) ------------------------------
+
+def test_t25fw_asymmetry_never_compares_feet_from_different_days(tmp_path):
+    """Pie izquierdo válido un día y derecho otro día: no hay ningún día bilateral, no hay asimetría."""
+    from gait_analysis.pipeline import GaitPipeline
+    rows = [
+        ('31', 'PAT-1', '2025-01-01 10:05:00+01', '2025-01-01 10:05:05+01', 'T25FW'),
+        ('32', 'PAT-1', '2025-01-01 10:06:00+01', '2025-01-01 10:06:05+01', 'T25FW'),
+        ('33', 'PAT-1', '2025-02-01 10:05:00+01', '2025-02-01 10:05:08+01', 'T25FW'),
+        ('34', 'PAT-1', '2025-02-01 10:06:00+01', '2025-02-01 10:06:08+01', 'T25FW'),
+    ]
+    config = write_config(tmp_path, write_csv(tmp_path, rows))
+    responses = [
+        [step_signal('Left', 5, '2025-01-01 10:05:00')], [step_signal('Left', 5, '2025-01-01 10:06:00')],
+        [step_signal('Right', 8, '2025-02-01 10:05:00', cadence_hz=0.8)], [step_signal('Right', 8, '2025-02-01 10:06:00', cadence_hz=0.8)],
+    ]
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client(responses)):
+        GaitPipeline(str(config)).run_from_csv(test_type='all')
+    book = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name=None)
+    patients = book['Datos_Pacientes'].replace('N/A', np.nan)
+    # Cada pie tiene su cadencia del paciente (de días distintos)...
+    assert patients.loc[0, 'T25FW_Left_cadencia_zancada'] == pytest.approx(60, abs=1)
+    assert patients.loc[0, 'T25FW_Right_cadencia_zancada'] == pytest.approx(48, abs=1)
+    # ...pero compararlas daría un 22 % sin ningún ensayo bilateral: la asimetría queda vacía.
+    assert pd.isna(patients.loc[0, 'T25FW_symmetry_index'])
+    trace = book['Agregacion_Pacientes'].set_index('test_type')
+    assert trace.loc['T25FW', 'dias_bilaterales'] == 0 and 'días distintos' in trace.loc['T25FW', 'regla']
+
+
+def test_t25fw_asymmetry_is_the_mean_of_the_bilateral_days(tmp_path):
+    from gait_analysis.pipeline import GaitPipeline
+    rows = [
+        ('41', 'PAT-1', '2025-01-01 10:05:00+01', '2025-01-01 10:05:05+01', 'T25FW'),
+        ('42', 'PAT-1', '2025-01-01 10:06:00+01', '2025-01-01 10:06:05+01', 'T25FW'),
+        ('43', 'PAT-1', '2025-02-01 10:05:00+01', '2025-02-01 10:05:08+01', 'T25FW'),
+        ('44', 'PAT-1', '2025-02-01 10:06:00+01', '2025-02-01 10:06:08+01', 'T25FW'),
+    ]
+    config = write_config(tmp_path, write_csv(tmp_path, rows))
+    both = lambda start, right_hz, seconds=5: [step_signal('Left', seconds, start), step_signal('Right', seconds, start, cadence_hz=right_hz)]
+    responses = [both('2025-01-01 10:05:00', 1.0), both('2025-01-01 10:06:00', 1.0),      # día 1: 60 y 60
+                 both('2025-02-01 10:05:00', 0.8, 8), both('2025-02-01 10:06:00', 0.8, 8)]      # día 2: 60 y 48
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client(responses)):
+        GaitPipeline(str(config)).run_from_csv(test_type='all')
+    book = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name=None)
+    patients = book['Datos_Pacientes'].replace('N/A', np.nan)
+    asymmetry = patients.loc[0, 'T25FW_symmetry_index']
+    expected = (0.0 + abs(60 - 48) / 54 * 100) / 2                        # media de los índices diarios
+    assert asymmetry == pytest.approx(expected, abs=1.0)
+    assert book['Agregacion_Pacientes'].set_index('test_type').loc['T25FW', 'dias_bilaterales'] == 2

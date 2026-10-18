@@ -40,15 +40,16 @@ TESTS_WITHOUT_GAIT_METRICS = ("TUG",)
 NOT_REPORTED = "NO_APLICA"
 # Pruebas cuyos intentos del mismo paciente y día se juntan para alcanzar el mínimo de zancadas.
 POOLED_TESTS = ("T25FW",)
-POOLED_NOTE = "zancadas de los intentos del mismo día juntas; resultado orientativo"
+POOLED_NOTE = ("zancadas de los intentos del mismo día juntas; resultado orientativo; asimetría: media de los índices "
+               "de los días con cadencia en los dos pies (nunca se comparan pies de días distintos)")
 
 # Alcance de cada hoja del Excel (se escribe en la hoja Leeme).
 SHEET_GUIDE = (
     ("Leeme", "Alcance del informe y contenido de cada hoja.", "-"),
     ("Datos_Ensayos", "Todas las métricas de cada ensayo en una fila, con su fecha: es la tabla para seguir a un paciente en el tiempo. Columnas {test}_{pie}_{métrica} y su estado de confianza {test}_{pie}_estado_{grupo} (OK o WARNING).", "evento"),
     ("Datos_Pacientes", "Resumen por paciente: media de sus ensayos con valor, incluidos los que están en WARNING; {test}_ensayos_warning dice cuántos lo están y {test}_{pie}_estado_{grupo}_n_warning, cuántos en cada grupo de métricas. Columnas {test}_{pie}_{métrica}.", "paciente"),
-    ("Calidad_Series", "Resultado de cada filtro de calidad por serie (presión, IMU, mínimo de zancadas) y motivo principal de lo que no se informa.", "evento y pie"),
-    ("Agregacion_Pacientes", "Ensayos que entran en cada paciente y test, cuántos son bilaterales y regla aplicada.", "paciente y test"),
+    ("Calidad_Series", "Resultado de cada filtro de calidad por serie (presión, IMU, mínimo de zancadas) y motivo principal de lo que no se informa. Distingue lo observado de lo rellenado: cobertura_observada_* (fracción de filas con valor nuevo), cobertura_* (fracción utilizable tras rellenar), muestras_interpoladas, muestras_retenidas (último valor repetido) y muestras_repetidas_reposo (IMU repetida con el pie quieto, aceptada como medida).", "evento y pie"),
+    ("Agregacion_Pacientes", "Ensayos que entran en cada paciente y test, cuántos son bilaterales y regla aplicada. En el T25FW, dias_bilaterales: días con cadencia en los dos pies, de los que sale la asimetría del paciente.", "paciente y test"),
     ("Ensayos", "Todas las métricas de cada ensayo y pie, con estado, motivo, cobertura y método de cada una.", "evento y pie"),
     ("Asimetria", "Índice de simetría de cadencia de cada ensayo; vacío si falta un pie (bilateral_available). Incluye la comparación del recuento de zancadas de los dos pies.", "evento"),
     ("Zancadas", "Cada zancada integrada entre dos pies planos: longitud, excursión vertical del tobillo o su causa de exclusión. La MTC queda vacía.", "zancada"),
@@ -180,6 +181,10 @@ class GaitPipeline:
             "n_huecos": report.get("n_huecos", np.nan),
             "tiempo_huecos_seg": report.get("tiempo_huecos_seg", np.nan),
             "muestras_interpoladas": report.get("muestras_interpoladas", np.nan),
+            "muestras_retenidas": report.get("muestras_retenidas", np.nan),
+            "muestras_repetidas_reposo": report.get("muestras_repetidas_reposo", np.nan),
+            "cobertura_observada_imu": report.get("cobertura_observada", {}).get("imu", np.nan),
+            "cobertura_observada_presion": report.get("cobertura_observada", {}).get("presion", np.nan),
             "irregularidad_tiempo": report.get("irregularidad_tiempo", np.nan),
             "rejilla_tiempo": report.get("rejilla_tiempo", ""),
             "cobertura_imu": coverage.get("imu", np.nan),
@@ -474,7 +479,11 @@ class GaitPipeline:
         En las pruebas de ``POOLED_TESTS`` (T25FW) un solo intento no alcanza el
         mínimo de zancadas: se juntan las zancadas de los intentos del mismo
         paciente y día, se calcula la métrica si alcanzan el mínimo y el valor
-        del paciente es la media de sus días. El resultado es orientativo.
+        del paciente es la media de sus días. El resultado es orientativo. La
+        asimetría se calcula día a día, solo en los días en que los dos pies
+        alcanzan el mínimo, y el valor del paciente es la media de esos índices
+        diarios: nunca se compara la cadencia de un pie de un día con la del
+        otro pie de otro día.
 
         Args:
             wide_rows (list[dict[str, Any]]): Una fila ancha por evento.
@@ -503,6 +512,7 @@ class GaitPipeline:
                     count = events[column].eq("WARNING").groupby(events["CodeID"], sort=False).sum()
                     patients[f"{column}_n_warning"] = count.where(done).reindex(patients.index)
         pooled_counts: dict[tuple[str, str], int] = defaultdict(int)
+        bilateral_days: dict[tuple[str, str], int] = defaultdict(int)
         for test in POOLED_TESTS:
             minimum = self._min_strides(test)
             if minimum is None:
@@ -513,10 +523,12 @@ class GaitPipeline:
                     for name in ("tiempos", "balanceos", "longitudes", "alturas"):
                         grouped[(row["CodeID"], row["Foot"], row["dia"])][name].extend(row[name])
             per_day: dict[tuple[str, str], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
-            for (code, side, _day), values in grouped.items():
+            daily_cadence: dict[tuple[str, str], dict[str, float]] = defaultdict(dict)
+            for (code, side, day), values in grouped.items():
                 target = per_day[(code, side)]
                 if len(values["tiempos"]) >= minimum:
-                    target["cadencia_zancada"].append(60.0 / float(np.mean(values["tiempos"])))
+                    daily_cadence[(code, day)][side] = 60.0 / float(np.mean(values["tiempos"]))
+                    target["cadencia_zancada"].append(daily_cadence[(code, day)][side])
                     target["zancadas"].append(len(values["tiempos"]))
                     pooled_counts[(code, test)] += len(values["tiempos"])
                 if len(values["balanceos"]) >= minimum:
@@ -526,20 +538,24 @@ class GaitPipeline:
                     target["stride_length_cm"].append(float(np.mean(values["longitudes"])))
                 if len(values["alturas"]) >= minimum:
                     target["excursion_tobillo_cm"].append(float(np.mean(values["alturas"])))
+            # Asimetría día a día: solo los días con cadencia en los dos pies.
+            daily_symmetry: dict[str, list[float]] = defaultdict(list)
+            for (code, _day), sides in daily_cadence.items():
+                left, right = sides.get("Left", 0.0), sides.get("Right", 0.0)
+                if left > 0 and right > 0:
+                    daily_symmetry[code].append(abs(left - right) / (0.5 * (left + right)) * 100)
+                    bilateral_days[(code, test)] += 1
             for code in patients.index:
-                cadences = {}
                 for side in SIDES:
                     for name in ("zancadas", "cadencia_zancada", "apoyo_prc", "balanceo_prc", "stride_length_cm", "excursion_tobillo_cm"):
                         column = f"{test}_{side}_{name}"
                         if column in patients.columns and pd.notna(patients.at[code, f"{test}_duracion_seg"]):
                             days = per_day.get((code, side), {}).get(name, [])
                             patients.at[code, column] = float(np.mean(days)) if days else np.nan
-                    cadences[side] = patients.at[code, f"{test}_{side}_cadencia_zancada"] if f"{test}_{side}_cadencia_zancada" in patients.columns else np.nan
                 column = f"{test}_{SYMMETRY_METRIC}"
                 if column in patients.columns and pd.notna(patients.at[code, f"{test}_duracion_seg"]):
-                    left, right = cadences.get("Left", np.nan), cadences.get("Right", np.nan)
-                    both = pd.notna(left) and pd.notna(right) and left > 0 and right > 0
-                    patients.at[code, column] = abs(left - right) / (0.5 * (left + right)) * 100 if both else np.nan
+                    values = daily_symmetry.get(code, [])
+                    patients.at[code, column] = float(np.mean(values)) if values else np.nan
         patients = patients.round(2).reset_index()
 
         trace = pd.DataFrame(asymmetry_rows).groupby(["CodeID", "test_type"], sort=False).agg(
@@ -554,6 +570,11 @@ class GaitPipeline:
         trace.loc[pooled, "regla"] = AGGREGATION_RULE + "; " + POOLED_NOTE
         trace["zancadas_juntadas"] = [
             pooled_counts.get((code, test), 0) if test in POOLED_TESTS else np.nan
+            for code, test in zip(trace["CodeID"], trace["test_type"])
+        ]
+        # En las pruebas juntadas, la asimetría del paciente sale de estos días, no de los intentos sueltos.
+        trace["dias_bilaterales"] = [
+            bilateral_days.get((code, test), 0) if test in POOLED_TESTS else np.nan
             for code, test in zip(trace["CodeID"], trace["test_type"])
         ]
 
@@ -826,7 +847,8 @@ class GaitPipeline:
         quality_columns = [
             "TrialID", "CodeID", "test_type", "Foot", "criterio_presion", "rango_talon", "periodicidad_talon", "ventanas_ritmo",
             "ventanas_con_ritmo_prc",
-            "cobertura_presion", "huecos_presion", "imu_estado", "presion_activa_seg", "imu_repeticion_presion_activa_prc",
+            "cobertura_observada_presion", "cobertura_presion", "huecos_presion", "muestras_interpoladas", "muestras_retenidas",
+            "cobertura_observada_imu", "cobertura_imu", "muestras_repetidas_reposo", "imu_estado", "presion_activa_seg", "imu_repeticion_presion_activa_prc",
             "giros_excluidos", "zancadas_margen_giro", "n_huecos",
             "intervalos_recuperados", "min_zancadas", "contactos_talon", "zancadas", "zancadas_en_banda_prc",
             "estado_cadencia", "motivo_cadencia", "estado_zancada", "motivo_zancada",

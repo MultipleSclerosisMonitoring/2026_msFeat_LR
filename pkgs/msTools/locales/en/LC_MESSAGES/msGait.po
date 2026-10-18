@@ -937,3 +937,7 @@ msgstr "WARN_EXCEL_SET_ASIDE: The previous Excel file has been set aside as {0}"
 #: src/gait_analysis/storage.py
 msgid "No se pudo apartar {0}: {1}"
 msgstr "Could not set aside {0}: {1}"
+
+#: src/gait_analysis/metrics.py
+msgid "DEBUG_SIGNAL_FILL: filas con valor nuevo: IMU {0:.0%}, presión {1:.0%}; {2} interpoladas, {3} retenidas (último valor repetido), {4} de IMU repetidas con el pie quieto"
+msgstr "DEBUG_SIGNAL_FILL: rows with a new value: IMU {0:.0%}, pressure {1:.0%}; {2} interpolated, {3} retained (last value repeated), {4} IMU rows repeated with the foot still"

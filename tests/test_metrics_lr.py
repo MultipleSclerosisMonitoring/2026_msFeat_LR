@@ -180,6 +180,28 @@ def test_pressure_gaps_are_measured_on_new_values():
     assert CALC.calcular_cadencia(prepared)['num_zancadas'] == 16
 
 
+def test_filling_never_covers_more_than_max_interpolation_and_is_counted():
+    """Feedback del 18/10/2026 y D19: lo rellenado se cuenta y nunca supera max_interpolation_s."""
+    calc = GaitMetricsCalculator(ProcessingConfig(**{**SHORT, 'max_gap_s': 0.3, 'max_interpolation_s': 0.1}))
+    pressure = ['S0', 'S1', 'S2']
+    frame = walk()
+    frame.loc[1001:1020, pressure] = np.nan                               # 0,2 s sin presión: entre 0,1 y 0,3 s
+    report = calc.preparar(frame).report
+    # Antes se repetía el último valor sin contarlo (0 interpoladas, 0 huecos). Ahora es un hueco del grupo.
+    assert report['muestras_retenidas'] == 0 and report['muestras_interpoladas'] == 0
+    assert report['huecos_por_grupo']['presion'] == 1
+    assert report['cobertura_observada']['presion'] == pytest.approx(1 - 20 / 2000, abs=1e-4)
+    assert report['cobertura']['presion'] == pytest.approx(1 - 20 / 2000, abs=1e-4)
+
+    # Al final de la serie no hay valor posterior: se repite el último, como mucho max_interpolation_s.
+    tail = walk()
+    tail.loc[1995:, pressure] = np.nan                                    # las 5 últimas filas (0,05 s)
+    report = calc.preparar(tail).report
+    assert report['muestras_retenidas'] == 5 and report['huecos_por_grupo']['presion'] == 0
+    assert report['cobertura_observada']['presion'] == pytest.approx(1 - 5 / 2000, abs=1e-4)
+    assert report['cobertura']['presion'] == 1.0                           # utilizable tras rellenar, no observada
+
+
 def test_repeated_imu_with_the_pressure_inactive_is_a_valid_measurement():
     frame = walk()
     t = seconds_of(frame)
@@ -189,6 +211,7 @@ def test_repeated_imu_with_the_pressure_inactive_is_a_valid_measurement():
     frame.loc[515:545, IMU] = frame.loc[514, IMU].to_numpy()                # 0,3 s repetidos con el pie quieto
     prepared = CALC.preparar(frame)
     assert prepared.report['huecos_por_grupo']['imu'] == 0 and prepared.report['cobertura']['imu'] == 1.0
+    assert prepared.report['muestras_repetidas_reposo'] >= 31                 # contadas aparte, aceptadas como medida
     assert prepared.report['imu_valida'] and prepared.report['imu_repeticion_presion_activa_prc'] == 0.0
     assert not prepared.data['Ay'].isna().any()
     # La presión está activa mientras se camina y deja de estarlo en la parada (ventana de 1 s centrada).

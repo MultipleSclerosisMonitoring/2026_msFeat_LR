@@ -56,11 +56,10 @@ class ProcessingConfig:
             ``received`` usa las marcas tal como llegaron.
         fs_tolerance (float): Desviación relativa admitida entre la frecuencia
             efectiva y la nominal antes de marcar la serie.
-        max_gap_s (float): Hay un hueco cuando pasan más de estos segundos sin
-            un valor nuevo, medido por grupo de sensores (IMU y presión). Un
-            hueco corta la serie para ese grupo. En la IMU solo se aplica con
-            la presión activa: con el pie quieto, el valor repetido es una
-            medida válida.
+        max_gap_s (float): Intervalo máximo entre filas consecutivas: si las
+            marcas de tiempo se separan más, la serie se corta en tramos (salvo
+            recepción retrasada). Dentro de cada grupo de sensores el hueco lo
+            marca ``max_interpolation_s``.
         reception_window_s (float): Tras un intervalo largo entre filas, tiempo
             adicional en el que se cuentan las muestras que llegan con retraso.
         reception_min_fraction (float): Si en el intervalo más esa ventana
@@ -80,7 +79,13 @@ class ProcessingConfig:
             evaluar la IMU; por debajo queda como no evaluable y sus métricas
             no se calculan.
         max_interpolation_s (float): Tiempo máximo sin valor nuevo que se
-            rellena por interpolación lineal; no puede superar ``max_gap_s``.
+            rellena en un grupo de sensores (IMU o presión): por interpolación
+            lineal entre los valores vecinos o, al final de un tramo, repitiendo
+            el último. Si pasa más tiempo sin valor nuevo, esas filas quedan sin
+            valor y cuentan como hueco del grupo, aunque no lleguen a
+            ``max_gap_s``. En la IMU solo se aplica con la presión activa: con
+            el pie quieto, el valor repetido es una medida válida. No puede
+            superar ``max_gap_s``.
         min_coverage (float): Fracción mínima del tiempo fuera de huecos que
             debe tener la presión para usarla.
         min_strides (Dict[str, int]): Mínimo de zancadas válidas por prueba para
@@ -569,14 +574,25 @@ class GaitMetricsCalculator:
     # ------------------------------------------------------------------ preparación
 
     def _fill_group(self, values: np.ndarray, t: np.ndarray, segment: np.ndarray,
-                    still: np.ndarray | None = None) -> tuple[np.ndarray, int, int, np.ndarray]:
+                    still: np.ndarray | None = None) -> tuple[np.ndarray, Dict[str, int], int, np.ndarray]:
         """Trata los huecos de un grupo de sensores.
 
         Una fila aporta un valor nuevo si algún canal del grupo cambia respecto
-        a la fila anterior. Las filas sin valor nuevo situadas entre dos valores
-        nuevos separados como mucho ``max_interpolation_s`` se interpolan; si
-        pasan más de ``max_gap_s`` sin valor nuevo hay un hueco y esas filas
-        quedan sin valor, lo que corta la serie para el grupo.
+        a la fila anterior. El relleno nunca cubre más de ``max_interpolation_s``
+        sin valor nuevo:
+
+        - Entre dos valores nuevos separados como mucho ``max_interpolation_s``,
+          las filas intermedias se interpolan.
+        - Al final de un tramo, sin valor nuevo posterior, las filas que quedan
+          a como mucho ``max_interpolation_s`` del último valor lo repiten
+          (filas retenidas).
+        - Todas las demás filas sin valor nuevo quedan sin valor y forman un
+          hueco del grupo, que corta la serie para ese grupo. Esto incluye las
+          que están entre ``max_interpolation_s`` y ``max_gap_s``: en la
+          práctica, el hueco de un grupo lo marca ``max_interpolation_s``.
+
+        Cada caso se cuenta por separado, para distinguir lo observado de lo
+        rellenado.
 
         Args:
             values (np.ndarray): Matriz filas × canales del grupo (``NaN`` si falta).
@@ -586,9 +602,11 @@ class GaitMetricsCalculator:
                 en ellas un valor repetido es una medida válida y se conserva.
 
         Returns:
-            tuple[np.ndarray, int, int, np.ndarray]: Valores tratados, número de
-            filas interpoladas, número de huecos del grupo y máscara de filas
-            sin valor nuevo.
+            tuple[np.ndarray, Dict[str, int], int, np.ndarray]: Valores tratados;
+            recuento de filas ``observadas`` (con valor nuevo), ``interpoladas``,
+            ``retenidas`` (último valor repetido) y ``reposo`` (valor repetido
+            con el sensor quieto, aceptado como medida); número de huecos del
+            grupo y máscara de filas sin valor nuevo.
         """
         cfg = self.config
         count = len(t)
@@ -598,7 +616,7 @@ class GaitMetricsCalculator:
         changed[1:] |= segment[1:] != segment[:-1]
         new = complete & changed
         if not new.any():
-            return np.full_like(values, np.nan), 0, 0, ~new
+            return np.full_like(values, np.nan), {"observadas": 0, "interpoladas": 0, "retenidas": 0, "reposo": 0}, 0, ~new
         index = np.arange(count)
         previous = np.maximum.accumulate(np.where(new, index, -1))
         following = np.minimum.accumulate(np.where(new, index, count)[::-1])[::-1]
@@ -609,10 +627,10 @@ class GaitMetricsCalculator:
         span = np.where(same_segment, t[next_safe] - t[prev_safe], np.inf)
         held = ~new
         interpolate = held & same_segment & (span <= cfg.max_interpolation_s)
-        # Sin valor nuevo posterior en el segmento: se mantiene el último solo dentro del umbral.
-        hold = held & ~same_segment & has_previous & (segment[prev_safe] == segment) & (t - t[prev_safe] <= cfg.max_gap_s)
-        hold |= held & same_segment & ~interpolate & (span <= cfg.max_gap_s)
+        # Sin valor nuevo posterior en el tramo: se repite el último, como mucho lo que se permite interpolar.
+        hold = held & ~same_segment & has_previous & (segment[prev_safe] == segment) & (t - t[prev_safe] <= cfg.max_interpolation_s)
         gap = held & ~interpolate & ~hold
+        exempt = np.zeros(count, dtype=bool)
         if still is not None:
             # Con el sensor quieto, repetir el valor es medir lo mismo: ni se interpola ni es hueco.
             exempt = held & still & complete
@@ -625,7 +643,9 @@ class GaitMetricsCalculator:
             out[interpolate] = values[prev_safe[interpolate]] * (1 - weight) + values[next_safe[interpolate]] * weight
         out[hold] = values[prev_safe[hold]]
         out[gap] = np.nan
-        return out, int(interpolate.sum()), len(_true_runs(gap)), held
+        counts = {"observadas": int(new.sum()), "interpoladas": int(interpolate.sum()),
+                  "retenidas": int(hold.sum()), "reposo": int(exempt.sum())}
+        return out, counts, len(_true_runs(gap)), held
 
     def _gravity(self, numeric: Dict[str, np.ndarray]) -> tuple[np.ndarray | None, float]:
         """Estima la dirección de la gravedad con las muestras en reposo de la serie.
@@ -794,14 +814,17 @@ class GaitMetricsCalculator:
         data = pd.DataFrame(index=np.arange(len(t)))
         coverage: Dict[str, float] = {}
         group_gaps: Dict[str, int] = {}
-        interpolated = 0
+        interpolated = retained = rest_repeated = 0
+        observed: Dict[str, float] = {}
         partial = PreparedSignal(t=t, data=data, segment=segment, dt=dt, fs=fs, report={"cobertura": coverage})
 
         # --- Presión: la regla de huecos se aplica siempre (varía incluso con el pie apoyado) ---
         present = [channel for channel in PRESSURE_CHANNELS if channel in numeric]
         if present:
             values, filled, n_gaps, _held = self._fill_group(np.column_stack([numeric[c] for c in present]), t, segment)
-            interpolated += filled
+            interpolated += filled["interpoladas"]
+            retained += filled["retenidas"]
+            observed["presion"] = round(filled["observadas"] / len(t), 4)
             group_gaps["presion"] = n_gaps
             # Cobertura: fracción del tiempo de señal continua fuera de huecos.
             coverage["presion"] = round(float(1 - np.isnan(values).any(axis=1).mean()), 4)
@@ -817,7 +840,10 @@ class GaitMetricsCalculator:
             active = self._pressure_active(data, fs)
             active_s = float(active.sum() * dt)
             values, filled, n_gaps, held = self._fill_group(raw, t, segment, still=~active)
-            interpolated += filled
+            interpolated += filled["interpoladas"]
+            retained += filled["retenidas"]
+            rest_repeated += filled["reposo"]
+            observed["imu"] = round(filled["observadas"] / len(t), 4)
             group_gaps["imu"] = n_gaps
             coverage["imu"] = round(float(1 - np.isnan(values).any(axis=1).mean()), 4)
             stale_active = float((held & active).sum() / active.sum()) if active.any() else float("nan")
@@ -842,7 +868,9 @@ class GaitMetricsCalculator:
             "presion_activa_seg": round(active_s, 1),
             "imu_repeticion_presion_activa_prc": round(100 * stale_active, 1),
             "exposicion_seg": round(duration - gap_time, 3), "cobertura": coverage, "huecos_por_grupo": group_gaps,
-            "muestras_interpoladas": interpolated, "tiempos_invalidos": invalid_times,
+            "muestras_interpoladas": interpolated, "muestras_retenidas": retained,
+            "muestras_repetidas_reposo": rest_repeated, "cobertura_observada": observed,
+            "tiempos_invalidos": invalid_times,
             "tiempos_repetidos": int(repeated.sum()), "reordenada": bool(reordered),
             "irregularidad_tiempo": round(irregularity, 3), "intervalo_mediano_s": round(float(np.median(inner)), 5),
             "rejilla_tiempo": cfg.time_grid,
@@ -850,6 +878,8 @@ class GaitMetricsCalculator:
             "fs_desviada": bool(abs(fs - cfg.fs) / cfg.fs > cfg.fs_tolerance),
         }
         logger.debug(_("DEBUG_SIGNAL_PREPARED: {0} muestras, fs efectiva {1:.2f} Hz (nominal {2:g}), {3} huecos ({4:.2f} s), {5} muestras interpoladas, irregularidad temporal {6:.0%}").format(len(t), fs, cfg.fs, report['n_huecos'], gap_time, interpolated, irregularity))
+        logger.debug(_("DEBUG_SIGNAL_FILL: filas con valor nuevo: IMU {0:.0%}, presión {1:.0%}; {2} interpoladas, {3} retenidas (último valor repetido), {4} de IMU repetidas con el pie quieto").format(
+            observed.get("imu", float("nan")), observed.get("presion", float("nan")), interpolated, retained, rest_repeated))
         logger.debug(_("DEBUG_SIGNAL_GROUPS: cobertura IMU {0:.0%} ({1} huecos), cobertura presión {2:.0%} ({3} huecos), inclinación respecto a Ay {4:.0f} grados (vertical estimada: {5})").format(
             coverage.get("imu", float("nan")), group_gaps.get("imu", 0), coverage.get("presion", float("nan")),
             group_gaps.get("presion", 0), tilt, direction is not None))
