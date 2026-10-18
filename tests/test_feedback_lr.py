@@ -427,7 +427,7 @@ def test_path_defaults_are_shared_and_independent_of_cwd(tmp_path, monkeypatch):
     paths = load_config(path)['paths']
     assert paths['registry_csv'] == str(PROJECT_ROOT / 'tests.csv')
     assert paths['h5_path'] == str(PROJECT_ROOT / 'data' / 'raw' / 'gait_study_data.h5')
-    assert paths['output_dataset'] == str(PROJECT_ROOT / 'DatasetMaestro.xlsx')
+    assert paths['output_dataset'] == str(PROJECT_ROOT / 'resultados_excel' / 'DatasetMaestro.xlsx')
     from gait_analysis.pipeline import GaitPipeline
     with patch('gait_analysis.pipeline.InfluxDBClient'), patch('gait_analysis.extractor.InfluxDBClient'):
         assert GaitPipeline(str(path)).h5_path == GaitDataExtractor(str(path))._h5_database == paths['h5_path']
@@ -643,3 +643,103 @@ def test_t25fw_stride_lengths_are_checked_against_the_test_distance_as_a_warning
     result, warned = check('T25FW', strides([], excluded=2))
     assert np.isnan(result['t25fw_suma_longitudes_m']) and not warned
     assert check('6MWT', strides([120] * 50)) == ({}, False)       # solo en T25FW: no hay distancia anotada en el 6MWT
+
+
+# --- Feedback del tutor del 18/10/2026: integridad (fase 1) ---------------------------
+
+def test_resume_never_relabels_stored_signals_of_another_registry_row(tmp_path, caplog):
+    """Mismo identificador, otro paciente: lo guardado no se reutiliza con la etiqueta nueva."""
+    from gait_analysis.pipeline import GaitPipeline
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client([[signal('Left'), signal('Right')],
+                                                                      [signal('Left', start='2025-01-02 10:00:00')]])):
+        GaitPipeline(str(config)).run_from_csv()
+    # El registro cambia después: el evento 10 pasa a ser de PAT-2 conservando el identificador.
+    write_csv(tmp_path, [('10', 'PAT-2', *ROWS[0][2:]), ROWS[1]])
+
+    with caplog.at_level(logging.ERROR, logger='msGait'):
+        results = GaitPipeline(str(config), offline=True).run_from_csv(stored_only=True)
+    mismatch = {r.trial_id: r for r in results}['10']
+    assert mismatch.status == 'IDENTITY_MISMATCH' and 'codeid: PAT-1 != PAT-2' in mismatch.detail
+    assert {r.trial_id: r.status for r in results}['11'] == 'OK' and 'ERR_STORED_IDENTITY' in caplog.text
+    book = pd.read_excel(tmp_path / 'out/dataset.xlsx', sheet_name=None)
+    assert book['Datos_Ensayos']['TrialID'].tolist() == [11] and 'PAT-2' not in set(book['Ensayos']['CodeID'])
+
+    # Con conexión (--missing-only) se vuelve a consultar y se guarda con la identidad nueva.
+    client = fake_client([[signal('Left'), signal('Right')]])
+    with patch('gait_analysis.pipeline.InfluxDBClient', client):
+        resumed = GaitPipeline(str(config)).run_from_csv(missing_only=True)
+    assert {r.trial_id: (r.status, r.source) for r in resumed} == {'10': ('OK', 'influx'), '11': ('OK', 'hdf5')}
+    assert client.return_value.query_api.return_value.query_data_frame.call_count == 1
+    assert read_meta(tmp_path / 'store/custom.h5', '/p_PAT-2/GAIT/trial_10/Left')['codeid'] == 'PAT-2'
+
+
+def test_reanalysis_without_events_replaces_the_previous_derived_file(tmp_path):
+    from gait_analysis.storage import NO_EVENTS, events_path_for, write_derived
+    previous = {'Left/eventos': pd.DataFrame({'tipo': ['contacto_talon'], 'inicio_s': [1.0]})}
+    target = write_derived(tmp_path, TRIAL, previous, {'huella_config_processing': 'antigua'})
+    assert target == events_path_for(tmp_path, TRIAL)
+
+    assert write_derived(tmp_path, TRIAL, {'Left/eventos': pd.DataFrame()}, {'huella_config_processing': 'nueva'}) == target
+    with pd.HDFStore(str(target), mode='r') as store:
+        assert store.keys() == ['/resumen'] and store.get('resumen')['motivo'].tolist() == [NO_EVENTS]
+        assert store.get_storer('resumen').attrs.trial_meta == {'huella_config_processing': 'nueva'}
+
+
+def test_run_without_data_fails_sets_the_previous_excel_aside_and_closes_after_publishing(tmp_path):
+    from gait_analysis.pipeline import GaitPipeline, NoDataError
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client([[signal('Left'), signal('Right')],
+                                                                      [signal('Left', start='2025-01-02 10:00:00')]])):
+        GaitPipeline(str(config)).run_from_csv()
+    manifest = Manifest(manifest_path_for(tmp_path / 'store/custom.h5'))
+    output = tmp_path / 'out/dataset.xlsx'
+    excel = manifest.records()[-1]['excel']
+    assert excel['estado'] == 'publicado' and Path(excel['ruta']) == output and output.exists()
+
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client([RuntimeError('timeout')] * 2)):
+        with pytest.raises(NoDataError, match='ERR_NO_DATA_PROCESSED'):
+            GaitPipeline(str(config)).run_from_csv()
+    assert not output.exists()
+    aside = list(output.parent.glob('dataset.anterior-*.xlsx'))
+    assert len(aside) == 1 and pd.read_excel(aside[0], sheet_name='Datos_Ensayos')['TrialID'].tolist() == [10, 11]
+    last = manifest.records()[-1]
+    assert last['record'] == 'run_end' and last['excel']['estado'] == 'no_publicado' and aside[0].name in last['excel']['detalle']
+
+
+def test_excel_publication_failure_is_recorded_when_closing_the_run(tmp_path):
+    from gait_analysis.pipeline import GaitPipeline
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    with patch('gait_analysis.pipeline.InfluxDBClient', fake_client([[signal('Left'), signal('Right')],
+                                                                      [signal('Left', start='2025-01-02 10:00:00')]])), \
+            patch('gait_analysis.pipeline.publish_excel', side_effect=StorageError('archivo abierto')):
+        with pytest.raises(StorageError):
+            GaitPipeline(str(config)).run_from_csv()
+    last = Manifest(manifest_path_for(tmp_path / 'store/custom.h5')).records()[-1]
+    assert last['record'] == 'run_end' and last['excel'] == {'estado': 'error', 'detalle': 'archivo abierto'}
+
+
+def test_check_config_validates_the_processing_parameters(tmp_path, capsys):
+    from gait_analysis.pipeline import main
+    config = write_config(tmp_path, write_csv(tmp_path, ROWS))
+    with pytest.raises(SystemExit) as valid:
+        main(['--config', str(config), '--check-config'])
+    assert valid.value.code == 0 and 'Configuración válida' in capsys.readouterr().out
+
+    data = yaml.safe_load(config.read_text())
+    data['processing']['max_interpolation_s'] = 0.5          # mayor que max_gap_s: el YAML se carga, el análisis no
+    config.write_text(yaml.safe_dump(data))
+    with pytest.raises(SystemExit) as invalid:
+        main(['--config', str(config), '--check-config'])
+    assert 'max_interpolation_s' in str(invalid.value.code)
+
+
+@pytest.mark.parametrize('axis, accepted', [('vertical', True), ('Gx', True), ('Gz', True), ('Ax', False), ('Az', False)])
+def test_turn_axis_only_accepts_angular_velocity(axis, accepted):
+    from gait_analysis.metrics import ProcessingConfig
+    from msConfig import ConfigError
+    if accepted:
+        assert ProcessingConfig.from_mapping({'turn_axis': axis}).turn_axis == axis
+    else:
+        with pytest.raises(ConfigError, match='turn_axis'):
+            ProcessingConfig.from_mapping({'turn_axis': axis})

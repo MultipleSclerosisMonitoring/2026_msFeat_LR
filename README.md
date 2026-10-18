@@ -40,7 +40,7 @@ This project focuses on the automated acquisition and processing of high-frequen
 
 **Dentro del TFG:** el paquete `src/gait_analysis/` (con `pipeline.py`, `metrics.py` y `plots.py`), sus lanzadores de la raíz, `benchmarks/`, `scripts/`, `tests/` y, de `pkgs/`, la parte compartida: `msConfig` (`load_config`, `ConfigError`), `msTools.i18n`, `msTools.timeutils` y `msTools.flux`.
 
-**Fuera del TFG (código heredado, se conserva sin mantener):** `pkgs/api.py`, `pkgs/msGait`, `pkgs/msCodeID`, `pkgs/ms_monitoring`, `pkgs/msTools/data_manager.py`, `create_tables.sql`, `pkgs/msgait.service` e `InfluxDBms/`. `consulta_influxdb.py`, `InfluxDBms/cInfluxDB.py` y `pkgs/config.yaml` se retiraron del repositorio: nada los usaba. No hay base PostgreSQL de pruebas en el repositorio. El servicio `msgait.service` es del despliegue del tutor: apunta a otro repositorio (DPC_2024) y a otro entorno, y se conserva tal cual. Lo corregido en ese código solo está probado con simulaciones. Su tratamiento de la hora puede desfasarse 1-2 h entre lo que guarda y lo que busca; se deduce del código y no se ha comprobado con datos.
+**Código heredado retirado.** El resto del paquete heredado del proyecto anterior (DPC_2024), que el pipeline no usaba, se retiró del repositorio el 18/10/2026: la API (`pkgs/api.py`), `msGait`, `msCodeID`, `ms_monitoring`, `msTools.data_manager`, `msTools.models`, `create_tables.sql`, `msgait.service` y su documentación y dependencias propias. Declararlo fuera del alcance no resolvía sus fallos (cruce de piernas sin identidad explícita, conexiones compartidas en la API). Sigue disponible en el historial de Git y en el repositorio original. Antes se habían retirado `consulta_influxdb.py`, `InfluxDBms/cInfluxDB.py` y `pkgs/config.yaml`.
 
 # Instalación y ejecución
 
@@ -48,7 +48,7 @@ Las dependencias se gestionan con [Poetry](https://python-poetry.org/). `pyproje
 
 ```bash
 pipx install poetry                 # una sola vez en el equipo
-poetry install --all-extras         # crea .venv/ con el pipeline, las gráficas, el código heredado y los tests
+poetry install --all-extras         # crea .venv/ con el pipeline, las gráficas y los tests
 poetry run pytest                   # tests
 ```
 
@@ -59,7 +59,7 @@ poetry run pytest                   # tests
 | Añadir una dependencia | `poetry add nombre` (actualiza `pyproject.toml` y `poetry.lock`) |
 | Rehacer `poetry.lock` tras editar `pyproject.toml` a mano | `poetry lock` |
 | Subir a las últimas versiones dentro de los intervalos | `poetry update` |
-| Instalar solo el pipeline | `poetry install` (extras: `graficos`, `pg`, `api`, `dev`) |
+| Instalar solo el pipeline | `poetry install` (extras: `graficos`, `dev`) |
 
 `poetry run python pipeline_test.py` y `poetry run python graficas_tfg.py` siguen funcionando: son lanzadores de las mismas órdenes. Sin Poetry también se puede instalar con `python -m pip install ".[dev]"`, pero entonces no se usan las versiones de `poetry.lock`.
 
@@ -67,7 +67,7 @@ El proyecto es un paquete de Python: `pipeline`, `metrics` y `plots` están dent
 
 Versiones de Python: 3.11 a 3.13. `.github/workflows/tests.yml` instala el proyecto desde cero y pasa los tests con las tres en cada subida a GitHub. En local solo se ha probado con 3.13 en Windows.
 
-Licencia: AGPL-3.0-or-later (GNU Affero GPL) para todo el repositorio, incluido el código heredado de `pkgs/` (`LICENSE` y `pkgs/LICENSE` son el mismo texto).
+Licencia: AGPL-3.0-or-later (GNU Affero GPL) para todo el repositorio (`LICENSE`).
 
 La configuración usa YAML para parámetros/rutas y `.env` para credenciales.
 En una instalación nueva:
@@ -77,7 +77,7 @@ cp config/config.example.yaml config/config.yaml
 cp .env.example .env
 ```
 
-Completar las variables de `.env`. En este espacio de trabajo ya se migró el acceso de `pkgs/.config.yaml`; conservar los archivos locales existentes.
+Completar las variables de `.env`. En este espacio de trabajo ya existen `config/config.yaml` y `.env`; conservar los archivos locales existentes.
 
 ```bash
 poetry run msfeat-pipeline --check-config
@@ -100,12 +100,6 @@ poetry run msfeat-graficas
 - **Polaridad de la presión (LR-22).** La presión sube cuando se pisa y el valor guardado baja; la lectura es relativa, no una presión absoluta, y por eso cada sensor se compara con su propio rango. No hay calibración física por hardware.
 - **Longitud de zancada (LR-25).** Integración entre pies planos, sin constante que calibrar. No hay distancia de referencia (tampoco anotada en los 6MWT) ni error de estimación. En el T25FW se avisa si la suma de longitudes de un intento no es coherente con los 7,62 m de la prueba (`WARN_T25FW_DISTANCE`, columnas `t25fw_suma_longitudes_m` y `t25fw_distancia_coherente`); es un aviso, no una validación ni una calibración.
 - **Excursión del tobillo y MTC (LR-26).** La excursión no tiene señal de referencia; la MTC no se calcula.
-- **Línea del 10 % en la figura de asimetría (LR-38).** Es una referencia visual sin significado clínico acreditado; su justificación queda para la memoria.
+- **Asimetría sin umbral (LR-38).** La figura de asimetría no dibuja ninguna línea de referencia: no hay un umbral publicado para la simetría de la cadencia de zancada, y la de los dos pies es casi igual por construcción. Se muestra un punto por paciente con la mediana.
 
-**Código heredado, limitaciones que se dejan sin corregir** (no hay PostgreSQL de pruebas y cambiarlo sin datos reales puede alterar lo que hace hoy):
-
-- **Hora (LR-47).** Conviven contratos distintos: hora de reloj etiquetada como UTC al leer de InfluxDB y UTC real en `ensure_utc()`. Puede haber un desfase de 1-2 h entre lo que se guarda y lo que se busca.
-- **API (LR-52).** Las conexiones y el detector se comparten entre peticiones, el arranque usa la hora UTC sin zona y una frecuencia nominal de 50 Hz. No se ha probado con carga ni concurrencia.
-- **Servicio (LR-61).** `pkgs/msgait.service` no despliega este repositorio. El flujo de GitHub Actions (`.github/workflows/tests.yml`) instala el proyecto desde cero y pasa los tests en Linux y Windows con Python 3.11, 3.12 y 3.13.
-
-El detalle de lo corregido en el código heredado está en [config/README.md](config/README.md).
+El flujo de GitHub Actions (`.github/workflows/tests.yml`) instala el proyecto desde cero y pasa los tests en Linux y Windows con Python 3.11, 3.12 y 3.13.

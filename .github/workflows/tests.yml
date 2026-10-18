@@ -17,9 +17,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Cabeceras de PostgreSQL (psycopg2 del código heredado)
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libpq-dev
       - name: Instalar Poetry
         run: pipx install poetry
       - name: Instalar el proyecto con las versiones de poetry.lock

@@ -14,6 +14,8 @@ from msTools.i18n import _
 logger = logging.getLogger("msGait.GaitMetricsCalculator")
 
 IMU_CHANNELS = ("Ax", "Ay", "Az", "Gx", "Gy", "Gz")
+# El detector de giros trabaja con velocidad angular: solo la vertical estimada o un canal del giroscopio.
+TURN_AXES = ("vertical", "Gx", "Gy", "Gz")
 PRESSURE_CHANNELS = ("S0", "S1", "S2")  # S0 y S1: antepié; S2: talón
 SIGNAL_CHANNELS = (*IMU_CHANNELS, *PRESSURE_CHANNELS)
 # Los huecos y la cobertura se miden por grupo de sensores.
@@ -114,7 +116,8 @@ class ProcessingConfig:
             debe estar a esta distancia de 1 g como máximo.
         turn_axis (str): ``vertical`` usa la velocidad de giro proyectada sobre
             la vertical estimada (``Gy`` si no puede estimarse); también admite
-            un canal concreto del giroscopio.
+            un canal concreto del giroscopio (``Gx``, ``Gy`` o ``Gz``), nunca
+            uno del acelerómetro.
         turn_smooth_cutoff_hz (float): Corte del pasabajos que elimina la
             oscilación de cada zancada antes de buscar giros.
         turn_threshold (float): Velocidad de giro suavizada (°/s) que debe
@@ -250,8 +253,8 @@ class ProcessingConfig:
                 raise ConfigError(_("processing.{0} debe ser un entero.").format(name))
         if not isinstance(self.pressure_stance_is_low, bool):
             raise ConfigError(_("processing.pressure_stance_is_low debe ser true o false."))
-        if self.turn_axis != "vertical" and self.turn_axis not in IMU_CHANNELS:
-            raise ConfigError(_("processing.turn_axis debe ser uno de {0}.").format(', '.join(("vertical", *IMU_CHANNELS))))
+        if self.turn_axis not in TURN_AXES:
+            raise ConfigError(_("processing.turn_axis debe ser uno de {0}.").format(', '.join(TURN_AXES)))
         if self.heel_channel not in PRESSURE_CHANNELS:
             raise ConfigError(_("processing.heel_channel debe ser uno de {0}.").format(', '.join(PRESSURE_CHANNELS)))
         if self.time_grid not in TIME_GRIDS:

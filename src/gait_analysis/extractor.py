@@ -16,7 +16,7 @@ from msTools.i18n import _
 from .logging_utils import log_summary
 from .query import fetch_trial_frame, split_series
 from .registry import (
-    STATUS_EMPTY, STATUS_OK, STATUS_QUERY_ERROR, STATUS_SKIPPED, STATUS_WRITE_ERROR,
+    STATUS_EMPTY, STATUS_IDENTITY_MISMATCH, STATUS_OK, STATUS_QUERY_ERROR, STATUS_SKIPPED, STATUS_WRITE_ERROR,
     Trial, TrialResult, load_registry,
 )
 from .storage import Manifest, SignalStore, StorageError, audit_store, manifest_path_for
@@ -88,6 +88,38 @@ def fetch_with_retries(client: Any, bucket: str, measurement: str, trial: Trial,
             time.sleep(wait)
 
 
+def identity_mismatches(store: SignalStore, keys: Iterable[str], trial: Trial) -> list[str]:
+    """Compara la identidad guardada de un evento con la del registro actual.
+
+    El manifest localiza un evento solo por su identificador; si el registro
+    cambió después (otro paciente, otra prueba u otras fechas con el mismo
+    identificador), las señales guardadas ya no corresponden a esa fila.
+
+    Args:
+        store (SignalStore): Almacén HDF5 abierto.
+        keys (Iterable[str]): Claves lógicas del evento según el manifest.
+        trial (Trial): Evento tal como figura ahora en el registro.
+
+    Returns:
+        list[str]: Campos que no coinciden, en la forma ``campo: guardado != registro``;
+        vacía si todos coinciden.
+    """
+    expected = {"codeid": trial.codeid, "t_code": trial.test_type, "d_from": trial.d_from, "d_until": trial.d_until}
+    differences: list[str] = []
+    for key in keys:
+        try:
+            meta = store.meta(key)
+        except Exception as error:
+            return [f"{key}: metadatos no legibles ({error})"]
+        for field, value in expected.items():
+            stored = meta.get(field)
+            if stored is None or str(stored) != str(value):
+                entry = f"{field}: {stored if stored is not None else '(sin valor)'} != {value}"
+                if entry not in differences:
+                    differences.append(entry)
+    return differences
+
+
 def acquire_trial(
     client: Any,
     bucket: str,
@@ -116,7 +148,11 @@ def acquire_trial(
         trial (Trial): Evento validado del registro.
         run_id (str): Identificador de la ejecución en curso.
         completed (Dict[str, list[str]] | None): Eventos ya completados según el
-            manifest. Si se indica, los que conservan sus claves no se consultan.
+            manifest. Si se indica, los que conservan sus claves y cuya identidad
+            guardada (paciente, prueba y fechas) coincide con el registro no se
+            consultan. Si la identidad no coincide, se vuelve a consultar; sin
+            cliente (``--stored-only``) el evento queda ``IDENTITY_MISMATCH``,
+            sin señales.
         load_stored (bool): Con ``completed``, devolver las señales almacenadas
             en lugar de marcar el evento como ``SKIPPED``.
         retry_waits (Iterable[float]): Esperas, en segundos, antes de cada
@@ -133,6 +169,19 @@ def acquire_trial(
     frames: Dict[str, pd.DataFrame] = {}
 
     stored_keys = (completed or {}).get(trial.trial_id, [])
+    if stored_keys and all(store.has(key) for key in stored_keys):
+        mismatches = identity_mismatches(store, stored_keys, trial)
+        if mismatches:
+            detail = "; ".join(mismatches)
+            if client is None:
+                result.status = STATUS_IDENTITY_MISMATCH
+                result.detail = f"lo guardado no corresponde al registro actual ({detail}); no se consulta (--stored-only)"
+                logger.error(_("ERR_STORED_IDENTITY: Evento {0}: lo guardado no corresponde al registro actual ({1}); queda sin métricas").format(trial.trial_id, detail))
+                result.elapsed_s = time.perf_counter() - started
+                # No se anota en el manifest: el evento sigue guardado y se detecta en cada recálculo.
+                return result, frames
+            logger.warning(_("WARN_STORED_IDENTITY: Evento {0}: lo guardado no corresponde al registro actual ({1}); se vuelve a consultar").format(trial.trial_id, detail))
+            stored_keys = []
     if stored_keys and all(store.has(key) for key in stored_keys):
         if not load_stored:
             result.status = STATUS_SKIPPED
@@ -218,7 +267,8 @@ def start_run(manifest: Manifest, command: str, total: int) -> str:
     return run_id
 
 
-def end_run(manifest: Manifest, run_id: str, results: Iterable[TrialResult], title: str, elapsed_s: float) -> Dict[str, int]:
+def end_run(manifest: Manifest, run_id: str, results: Iterable[TrialResult], title: str, elapsed_s: float,
+            excel: Dict[str, str] | None = None) -> Dict[str, int]:
     """Anota el fin de una ejecución y muestra el resumen por estado.
 
     Una ejecución con ``run_start`` y sin ``run_end`` quedó interrumpida.
@@ -229,16 +279,21 @@ def end_run(manifest: Manifest, run_id: str, results: Iterable[TrialResult], tit
         results (Iterable[TrialResult]): Resultados de todos los eventos.
         title (str): Texto que identifica la ejecución en el resumen.
         elapsed_s (float): Duración total de la ejecución.
+        excel (Dict[str, str] | None): Resultado de la publicación del Excel
+            (``estado`` y ``ruta`` o ``detalle``), si la ejecución lo genera.
 
     Returns:
         Dict[str, int]: Número de eventos por estado.
     """
     results = list(results)
     counts = log_summary(logger, results, title)
-    manifest.append({
+    record = {
         "record": "run_end", "run_id": run_id, "counts": counts, "total": len(results),
         "elapsed_s": round(elapsed_s, 3), "ts": datetime.now().isoformat(timespec="seconds"),
-    })
+    }
+    if excel is not None:
+        record["excel"] = excel
+    manifest.append(record)
     return counts
 
 

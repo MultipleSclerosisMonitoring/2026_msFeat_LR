@@ -917,3 +917,23 @@ msgstr "Symmetry index per patient - {t}"
 #: src/gait_analysis/plots.py
 msgid "Pacientes, de menor a mayor índice"
 msgstr "Patients, from lowest to highest index"
+
+#: src/gait_analysis/extractor.py
+msgid "WARN_STORED_IDENTITY: Evento {0}: lo guardado no corresponde al registro actual ({1}); se vuelve a consultar"
+msgstr "WARN_STORED_IDENTITY: Event {0}: the stored data do not match the current registry ({1}); it will be queried again"
+
+#: src/gait_analysis/extractor.py
+msgid "ERR_STORED_IDENTITY: Evento {0}: lo guardado no corresponde al registro actual ({1}); queda sin métricas"
+msgstr "ERR_STORED_IDENTITY: Event {0}: the stored data do not match the current registry ({1}); no metrics are computed"
+
+#: src/gait_analysis/pipeline.py
+msgid "El Excel anterior se ha apartado como {0}."
+msgstr "The previous Excel file has been set aside as {0}."
+
+#: src/gait_analysis/storage.py
+msgid "WARN_EXCEL_SET_ASIDE: El Excel anterior se ha apartado como {0}"
+msgstr "WARN_EXCEL_SET_ASIDE: The previous Excel file has been set aside as {0}"
+
+#: src/gait_analysis/storage.py
+msgid "No se pudo apartar {0}: {1}"
+msgstr "Could not set aside {0}: {1}"

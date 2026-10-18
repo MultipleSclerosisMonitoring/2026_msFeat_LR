@@ -42,8 +42,6 @@ class ConfigError(ValueError):
 def resolve_config_path(config_path: str | Path | None = None) -> Path:
     if config_path is None:
         path = DEFAULT_CONFIG
-        if not path.exists():
-            path = PROJECT_ROOT / 'pkgs' / '.config.yaml'
     else:
         path = Path(config_path).expanduser()
         if not path.is_absolute() and not path.exists():
@@ -251,7 +249,7 @@ def _validate_analysis(config: dict, path: Path) -> None:
     paths.setdefault('registry_csv', str(PROJECT_ROOT / 'tests.csv'))
     paths.setdefault('output_folder', str(PROJECT_ROOT / 'data' / 'raw'))
     paths.setdefault('h5_path', str(Path(paths['output_folder']) / 'gait_study_data.h5'))
-    paths.setdefault('output_dataset', str(PROJECT_ROOT / 'DatasetMaestro.xlsx'))
+    paths.setdefault('output_dataset', str(PROJECT_ROOT / 'resultados_excel' / 'DatasetMaestro.xlsx'))
     # Detected events live apart from the raw signals: <store folder>/../results.
     paths.setdefault('results_folder', str(Path(paths['h5_path']).parent.parent / 'results'))
     # An output must never overwrite the input registry or another output.

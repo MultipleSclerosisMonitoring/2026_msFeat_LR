@@ -36,8 +36,7 @@ def test_dependencies_are_ranged_and_locked():
         assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*>=[0-9][0-9.]*,<[0-9][0-9.]*', requirement), requirement
         assert name not in sys.stdlib_module_names
     extras = project['project']['optional-dependencies']
-    assert {'graficos', 'pg', 'api', 'dev'} <= set(extras) and any(item.startswith('seaborn') for item in extras['graficos'])
-    assert any(item.startswith('psycopg2') for item in extras['pg'])
+    assert set(extras) == {'graficos', 'dev'} and any(item.startswith('seaborn') for item in extras['graficos'])
     # Poetry: backend de construcción, versiones de Python admitidas, licencia y versiones probadas (poetry.lock).
     assert project['build-system']['build-backend'] == 'poetry.core.masonry.api'
     assert project['project']['requires-python'] == '>=3.11,<3.14' and project['project']['license'] == 'AGPL-3.0-or-later'
@@ -52,7 +51,7 @@ def test_every_imported_distribution_is_declared():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))['project']
     declared = ' '.join(project['dependencies'] + sum(project['optional-dependencies'].values(), [])).lower()
     module_to_distribution = {'yaml': 'pyyaml', 'dotenv': 'python-dotenv', 'influxdb_client': 'influxdb-client'}
-    local = {'gait_analysis', 'msConfig', 'msTools', 'msGait', 'msCodeID'}
+    local = {'gait_analysis', 'msConfig', 'msTools'}
     files = [*(ROOT / 'src').rglob('*.py'), *(ROOT / 'pkgs' / 'msConfig').rglob('*.py'), ROOT / 'pkgs/msTools/flux.py',
              ROOT / 'pkgs/msTools/timeutils.py', ROOT / 'pkgs/msTools/i18n.py']
     for file in files:
@@ -65,7 +64,7 @@ def test_every_imported_distribution_is_declared():
 def test_packaged_library_is_self_consistent_and_versioned():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))
     packages = {(item['include'], item['from']) for item in project['tool']['poetry']['packages']}
-    assert {('gait_analysis', 'src'), ('msConfig', 'pkgs'), ('msTools', 'pkgs'), ('msGait', 'pkgs'), ('msCodeID', 'pkgs')} <= packages   # DataManager necesita msGait.models
+    assert packages == {('gait_analysis', 'src'), ('msConfig', 'pkgs'), ('msTools', 'pkgs')}
     import gait_analysis
     assert gait_analysis.__version__ == project['project']['version']
     assert 'version_pipeline' in (ROOT / 'src/gait_analysis/pipeline.py').read_text(encoding='utf-8')
@@ -163,7 +162,7 @@ def test_tls_is_verified_by_default_and_warnings_are_not_silenced(tmp_path, capl
 def test_no_module_silences_tls_warnings_or_rewrites_the_host():
     code = (
         "import sys, warnings; sys.path[:0]=['.', 'pkgs', 'src']\n"
-        "import urllib3, pipeline_test, gait_analysis.extractor, msTools.data_manager\n"
+        "import urllib3, pipeline_test, gait_analysis.extractor\n"
         "with warnings.catch_warnings(record=True) as caught:\n"
         "    warnings.simplefilter('default')\n"
         "    warnings.warn('x', urllib3.exceptions.InsecureRequestWarning)\n"
@@ -172,7 +171,7 @@ def test_no_module_silences_tls_warnings_or_rewrites_the_host():
     done = subprocess.run([sys.executable, '-c', code], cwd=ROOT, capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip().splitlines()[-1] == '1'
-    for file in ('src/gait_analysis/pipeline.py', 'src/gait_analysis/extractor.py', 'pkgs/msTools/data_manager.py'):
+    for file in ('src/gait_analysis/pipeline.py', 'src/gait_analysis/extractor.py'):
         text = (ROOT / file).read_text(encoding='utf-8')
         assert 'disable_warnings' not in text and '138.100' not in text and 'normalize_influx_url' not in text, file
 
@@ -229,22 +228,15 @@ def test_readmes_only_reference_files_that_exist():
         assert module in core, f'src/gait_analysis/README.md no menciona {module}'
 
 
-def test_retired_files_are_gone_and_legacy_config_verifies_tls():
-    for retired in ('consulta_influxdb.py', 'InfluxDBms/cInfluxDB.py', 'pkgs/config.yaml'):
+def test_retired_files_are_gone():
+    for retired in ('consulta_influxdb.py', 'InfluxDBms/cInfluxDB.py', 'pkgs/config.yaml', 'pkgs/.config.yaml', 'informe/TFG.docx'):
         assert not (ROOT / retired).exists(), retired
-    legacy = yaml.safe_load((ROOT / 'pkgs/.config.yaml').read_text(encoding='utf-8'))
-    assert legacy['influxdb'].get('verify_ssl') is True and 'verify' not in legacy['influxdb']
-    assert legacy['movement']['min_continuous_seconds'] == 10 and 'min_continuous_hits' not in legacy['movement']
 
 
 def test_one_licence_for_every_component():
-    assert (ROOT / 'LICENSE').read_bytes() == (ROOT / 'pkgs/LICENSE').read_bytes()
     assert 'AFFERO' in (ROOT / 'LICENSE').read_text(encoding='utf-8')[:200]
-    for file in ('pyproject.toml', 'pkgs/pyproject.toml'):
-        assert 'AGPL-3.0-or-later' in (ROOT / file).read_text(encoding='utf-8'), file
-    for readme in ('pkgs/README.md', 'pkgs/msGait/README.md', 'pkgs/msTools/README.md', 'pkgs/msCodeID/README.md',
-                   'pkgs/ms_monitoring/README.md'):
-        assert 'MIT' not in (ROOT / readme).read_text(encoding='utf-8'), readme
+    assert 'AGPL-3.0-or-later' in (ROOT / 'pyproject.toml').read_text(encoding='utf-8')
+    assert not (ROOT / 'pkgs/LICENSE').exists()               # una sola licencia, en la raíz
 
 
 # --- Contrato de la hora: el registro guarda instantes con zona; InfluxDB, hora de reloj ---

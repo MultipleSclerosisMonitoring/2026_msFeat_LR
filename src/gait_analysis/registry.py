@@ -22,6 +22,7 @@ STATUS_QUERY_ERROR = "QUERY_ERROR"
 STATUS_WRITE_ERROR = "WRITE_ERROR"
 STATUS_SKIPPED = "SKIPPED"
 STATUS_EXCLUDED = "EXCLUDED"
+STATUS_IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
 
 # Los valores se interpolan en Flux y en claves HDF5: solo caracteres seguros.
 _SAFE_VALUE = re.compile(r"[A-Za-z0-9_.\-]+")

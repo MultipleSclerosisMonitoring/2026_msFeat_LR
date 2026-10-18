@@ -22,7 +22,7 @@ paths:
   registry_csv: ../tests.csv
   output_folder: ../data/raw
   h5_path: ../data/raw/gait_study_data.h5
-  output_dataset: ../DatasetMaestro.xlsx
+  output_dataset: ../resultados_excel/DatasetMaestro.xlsx   # si una ejecución termina sin datos, el anterior se aparta aquí como DatasetMaestro.anterior-AAAAMMDD-HHMMSS.xlsx
   # results_folder: ../data/results   # eventos detectados por ensayo; por defecto, junto a la carpeta del almacén
 processing:
   # Todos los parámetros son opcionales; se muestran los valores por defecto.
@@ -65,7 +65,7 @@ processing:
   rest_gyro_quantile: 0.25      # fracción de muestras con menos giro candidatas a reposo
   rest_accel_tolerance_g: 0.1   # en reposo, el módulo de la aceleración está a esta distancia de 1 g
   # --- Giros por ángulo acumulado ---
-  turn_axis: vertical           # giro en torno a la vertical estimada (Gy si no se puede estimar); o un canal: Gy
+  turn_axis: vertical           # giro en torno a la vertical estimada (Gy si no se puede estimar); o un canal del giroscopio: Gx, Gy o Gz
   turn_smooth_cutoff_hz: 0.5    # quita la oscilación de cada zancada (provisional)
   turn_threshold: 25.0          # velocidad de giro suavizada (grados/s) que debe superarse en el episodio (provisional)
   turn_extend_threshold: 10.0   # el episodio se extiende hasta bajar de esta velocidad, para no perder ángulo (provisional)

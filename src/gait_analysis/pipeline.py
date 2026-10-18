@@ -24,10 +24,14 @@ from gait_analysis.extractor import acquire_trial, end_run, fetch_with_retries, 
 from gait_analysis.logging_utils import configure_logging
 from gait_analysis.registry import STATUS_SKIPPED, RegistryError, Trial, TrialResult, load_registry
 from gait_analysis.storage import (
-    Manifest, SignalStore, StorageError, audit_store, manifest_path_for, publish_excel, write_derived,
+    Manifest, SignalStore, StorageError, audit_store, manifest_path_for, publish_excel, set_aside, write_derived,
 )
 
 logger = logging.getLogger("msGait.Pipeline")
+
+
+class NoDataError(RuntimeError):
+    """Ninguna fila seleccionada del registro ha producido señales que analizar."""
 
 
 SIDES = ("Left", "Right")
@@ -716,6 +720,9 @@ class GaitPipeline:
             RegistryError: Si al registro le faltan columnas requeridas.
             StorageError: Si el almacén está bloqueado, tiene el esquema antiguo
                 o el Excel no puede publicarse.
+            NoDataError: Si ningún evento tiene señales. El Excel anterior, si
+                existe, se aparta (:func:`set_aside`) para que no parezca el
+                resultado de esta ejecución.
         """
         config = self.config
         csv_path = csv_path or config["paths"]["registry_csv"]
@@ -789,11 +796,17 @@ class GaitPipeline:
                     wide_rows.append(wide)
             if executor is not None:
                 executor.shutdown(wait=True)
-            end_run(manifest, run_id, results, "Pipeline", time.perf_counter() - started)
 
+        output = config["paths"]["output_dataset"]
         if not wide_rows:
-            logger.error(_("ERR_NO_DATA_PROCESSED: No se generaron datos para ningún ensayo clínico."))
-            return results
+            # Un Excel anterior parecería el resultado de esta ejecución: se aparta.
+            previous = set_aside(output)
+            detail = _("ERR_NO_DATA_PROCESSED: No se generaron datos para ningún ensayo clínico.")
+            if previous is not None:
+                detail += " " + _("El Excel anterior se ha apartado como {0}.").format(previous.name)
+            end_run(manifest, run_id, results, "Pipeline", time.perf_counter() - started,
+                    excel={"estado": "no_publicado", "detalle": detail})
+            raise NoDataError(detail)
 
         # --- Ensayos realmente procesados: con al menos una métrica con valor ---
         df_events = pd.DataFrame(wide_rows)
@@ -863,8 +876,15 @@ class GaitPipeline:
         if not (sheets["Estadisticas_Globales"].loc["n_validos"] > 0).any():
             logger.warning(_("WARN_NO_NUMERIC_STATS: No hay suficientes datos numéricos para Estadísticas Globales."))
 
-        output = config["paths"]["output_dataset"]
-        publish_excel(sheets, output, index_sheets=("Estadisticas_Ensayos", "Estadisticas_Globales"))
+        # La ejecución se cierra en el manifest después de publicar, con el resultado de la publicación.
+        try:
+            publish_excel(sheets, output, index_sheets=("Estadisticas_Ensayos", "Estadisticas_Globales"))
+        except StorageError as error:
+            end_run(manifest, run_id, results, "Pipeline", time.perf_counter() - started,
+                    excel={"estado": "error", "detalle": str(error)})
+            raise
+        end_run(manifest, run_id, results, "Pipeline", time.perf_counter() - started,
+                excel={"estado": "publicado", "ruta": str(output)})
         logger.info(_("INFO_PIPELINE_COMPLETED: Pipeline finalizado. Excel generado ({out}).").format(out=output))
         return results
 
@@ -892,7 +912,8 @@ def main(argv: list[str] | None = None) -> None:
     configure_logging(args.verbose)
     try:
         if args.check_config:
-            load_config(args.config)
+            # Valida también todos los parámetros del análisis, no solo el YAML y las credenciales.
+            ProcessingConfig.from_mapping(load_config(args.config).get("processing"))
             print('Configuración válida; no se han realizado conexiones.')
             sys.exit(0)
         pipeline = GaitPipeline(args.config, offline=args.stored_only or args.audit)
@@ -904,7 +925,7 @@ def main(argv: list[str] | None = None) -> None:
             pipeline.audit(args.csv, args.test_type)
         else:
             pipeline.run_from_csv(args.csv, ids, args.missing_only, args.test_type, args.stored_only, args.workers)
-    except (FileNotFoundError, RegistryError, StorageError) as error:
+    except (FileNotFoundError, RegistryError, StorageError, NoDataError) as error:
         sys.exit(f"ERROR: {error}")
     finally:
         if pipeline.client is not None:

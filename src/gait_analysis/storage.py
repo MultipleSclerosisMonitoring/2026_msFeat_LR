@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import warnings
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -17,6 +18,8 @@ logger = logging.getLogger("msGait.Storage")
 _META_ATTR = "trial_meta"
 _EVENT_GLOB = "p_*/*/trial_*.h5"
 _TEMPORARY_GLOB = "*.tmp-*"
+# Motivo del archivo de eventos de un ensayo en el que el análisis no detecta nada.
+NO_EVENTS = "sin eventos"
 
 
 class StorageError(RuntimeError):
@@ -345,7 +348,10 @@ def write_derived(results_folder: str | Path, trial: Trial, tables: dict[str, pd
     tramos excluidos con su motivo) y otra con las zancadas integradas
     (``{pie}/zancadas``). Como atributos lleva la versión del código, la huella
     de la configuración y la fecha de la ejecución. Cada ejecución sustituye el
-    archivo del ensayo.
+    archivo del ensayo, también cuando no detecta nada: entonces el archivo
+    solo lleva una tabla ``resumen`` con el motivo ``sin eventos`` y los
+    atributos de la ejecución, para que no quede el resultado de una
+    configuración anterior.
 
     Args:
         results_folder (str | Path): Valor de ``paths.results_folder``.
@@ -354,14 +360,14 @@ def write_derived(results_folder: str | Path, trial: Trial, tables: dict[str, pd
         meta (dict[str, Any]): Atributos (versión, huella de configuración, fechas).
 
     Returns:
-        Path | None: Archivo publicado, o ``None`` si no hay nada que guardar.
+        Path: Archivo publicado.
 
     Raises:
         StorageError: Si falla la escritura o el reemplazo.
     """
     tables = {name: table for name, table in tables.items() if table is not None and not table.empty}
     if not tables:
-        return None
+        tables = {"resumen": pd.DataFrame({"motivo": [NO_EVENTS]})}
     target = events_path_for(results_folder, trial)
     temporary = target.with_name(f"{target.name}.tmp-{os.getpid()}")
     try:
@@ -481,6 +487,38 @@ def audit_store(h5_path: str | Path, trials: Iterable[Trial], manifest: Manifest
         "missing": missing, "orphan": sorted(set(keys) - expected),
         "legacy": [str(h5_path)] if Path(h5_path).is_file() else [], "unconfirmed": unconfirmed,
     }
+
+
+def set_aside(output: str | Path) -> Path | None:
+    """Aparta un Excel de resultados para que no parezca de la ejecución en curso.
+
+    Lo renombra en la misma carpeta como ``{nombre}.anterior-AAAAMMDD-HHMMSS{ext}``,
+    con la fecha de su última modificación, sin borrar nada.
+
+    Args:
+        output (str | Path): Ruta del Excel (``paths.output_dataset``).
+
+    Returns:
+        Path | None: Nueva ruta del archivo apartado, o ``None`` si no existía.
+
+    Raises:
+        StorageError: Si no se puede renombrar (por ejemplo, abierto en Excel).
+    """
+    output = Path(output).resolve()
+    if not output.is_file():
+        return None
+    stamp = datetime.fromtimestamp(output.stat().st_mtime).strftime("%Y%m%d-%H%M%S")
+    target = output.with_name(f"{output.stem}.anterior-{stamp}{output.suffix}")
+    counter = 1
+    while target.exists():
+        counter += 1
+        target = output.with_name(f"{output.stem}.anterior-{stamp}-{counter}{output.suffix}")
+    try:
+        os.replace(output, target)
+    except OSError as error:
+        raise StorageError(_("No se pudo apartar {0}: {1}").format(output, error)) from error
+    logger.warning(_("WARN_EXCEL_SET_ASIDE: El Excel anterior se ha apartado como {0}").format(target))
+    return target
 
 
 def publish_excel(sheets: dict[str, pd.DataFrame], output: str | Path, index_sheets: Iterable[str] = ()) -> Path:

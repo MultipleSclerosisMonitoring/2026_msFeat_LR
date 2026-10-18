@@ -22,12 +22,8 @@ dependencies = [
 [project.optional-dependencies]
 # msfeat-graficas
 graficos = ["matplotlib>=3.9,<4", "seaborn>=0.13,<1"]
-# Paquete heredado (fuera del alcance del TFG): DataManager, MovementDetector, CodeIDProcessor
-pg = ["psycopg2>=2.9.5,<3", "pydantic>=2,<3", "xlsxwriter>=3,<4"]
-# API heredada (fuera del alcance del TFG): pkgs/api.py
-api = ["psycopg2>=2.9.5,<3", "pydantic>=2,<3", "xlsxwriter>=3,<4", "fastapi>=0.110,<1", "uvicorn[standard]>=0.29,<1"]
 # Tests y generación de DUDAS.pdf
-dev = ["matplotlib>=3.9,<4", "seaborn>=0.13,<1", "pytest>=8,<10", "httpx>=0.27,<1", "reportlab>=4,<6"]
+dev = ["matplotlib>=3.9,<4", "seaborn>=0.13,<1", "pytest>=8,<10", "reportlab>=4,<6"]
 
 [project.scripts]
 msfeat-pipeline = "gait_analysis.pipeline:main"
@@ -40,8 +36,6 @@ packages = [
     { include = "gait_analysis", from = "src" },
     { include = "msConfig", from = "pkgs" },
     { include = "msTools", from = "pkgs" },
-    { include = "msGait", from = "pkgs" },
-    { include = "msCodeID", from = "pkgs" },
 ]
 
 [build-system]

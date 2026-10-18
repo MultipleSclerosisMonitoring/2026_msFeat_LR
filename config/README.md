@@ -1,6 +1,6 @@
 # Configuración única: YAML + .env
 
-El cargador `msConfig.load_config` es compartido por el pipeline y por `DataManager` (incluidos los comandos y la API de `pkgs`). Solo lee configuración; no abre conexiones ni modifica `os.environ`.
+El cargador `msConfig.load_config` lee la configuración del pipeline y de las gráficas. Solo lee configuración; no abre conexiones ni modifica `os.environ`.
 
 ## Preparación
 
@@ -13,7 +13,7 @@ cp config/config.example.yaml config/config.yaml
 cp .env.example .env
 ```
 
-En PowerShell, activar con `.\.venv\Scripts\Activate.ps1` y copiar con `Copy-Item`. Completar `.env` con los datos de conexión. La migración realizada en este espacio de trabajo ya creó `config/config.yaml` y `.env` a partir de `pkgs/.config.yaml`; no volver a copiar las plantillas sobre esos archivos.
+En PowerShell, activar con `.\.venv\Scripts\Activate.ps1` y copiar con `Copy-Item`. Completar `.env` con los datos de conexión. En este espacio de trabajo ya existen `config/config.yaml` y `.env`; no volver a copiar las plantillas sobre esos archivos.
 
 `.env` contiene URL, organización, bucket y token InfluxDB, y host, usuario, contraseña y base PostgreSQL. Es local, ignorado por Git y creado con permisos 0600 en esta migración. Los YAML de compatibilidad ahora usan `${INFLUXDB_TOKEN}`, `${POSTGRES_PASSWORD}`, etc.; ningún cargador conserva una segunda implementación de lectura YAML.
 
@@ -24,17 +24,16 @@ Se conserva el archivo privado ignorado `InfluxDBms/.config_db.yaml`, ahora tamb
 `config/config.example.yaml` documenta el esquema completo y conserva los parámetros de movimiento de la configuración de referencia:
 
 - `influxdb`: conexión, `measurement`, `timeout` en milisegundos, `verify_ssl` y `ssl_ca_cert`. El certificado TLS se verifica por defecto; `ssl_ca_cert` es opcional, para una CA propia. Si se desactiva con `verify_ssl: false` (o el nombre antiguo `verify`), cada ejecución lo avisa en nivel 0 y los avisos de urllib3 no se silencian. La URL debe usar el nombre del servidor que figura en su certificado, no la IP.
-- `postgresql`: conexión y `port`; el puerto ya se transmite a psycopg2. Esta sección se puede eliminar en configuraciones que solo usan InfluxDB. Si existe, sus variables también deben estar completas.
-- `paths.registry_csv`, `paths.output_folder`, `paths.h5_path`, `paths.output_dataset`: entrada y salidas del pipeline. Si falta alguna, el cargador aplica un único valor por defecto relativo a la raíz del repositorio (`tests.csv`, `data/raw`, `data/raw/gait_study_data.h5`, `DatasetMaestro.xlsx`), nunca al directorio de ejecución.
+- `postgresql`: sección del código heredado, ya retirado; el pipeline no la usa. Si existe, el cargador comprueba que sus variables estén completas.
+- `paths.registry_csv`, `paths.output_folder`, `paths.h5_path`, `paths.output_dataset`: entrada y salidas del pipeline. Si falta alguna, el cargador aplica un único valor por defecto relativo a la raíz del repositorio (`tests.csv`, `data/raw`, `data/raw/gait_study_data.h5`, `resultados_excel/DatasetMaestro.xlsx`), nunca al directorio de ejecución. Si una ejecución termina sin datos, el Excel anterior se aparta en la misma carpeta como `DatasetMaestro.anterior-AAAAMMDD-HHMMSS.xlsx` y la orden termina con error.
 - `processing.fs`: frecuencia nominal (50 Hz por defecto). Solo sirve para señalar las series cuya frecuencia medida es distinta; todas las métricas usan la frecuencia medida en cada serie. Debe ser finita y mayor que 10 Hz.
 - `batch.test_type`: selección para extracción HDF5; `project.language`: idioma del pipeline directo.
-- `movement`: parámetros del detector heredado (no están en la plantilla; ver `pkgs/.config.yaml` y el apartado del paquete heredado). No utiliza `processing.fs`.
 
 Todas las entradas de `paths` se resuelven respecto al directorio del YAML. Por eso la plantilla en `config/` usa `../tests.csv` y `../data/raw`. Son independientes del directorio de ejecución. Las rutas pasadas como argumentos CLI se interpretan respecto al directorio de ejecución.
 
 ## Selección y precedencia
 
-1. Se usa el YAML indicado con `--config`; sin argumento, `config/config.yaml` y, si falta, `pkgs/.config.yaml` como compatibilidad.
+1. Se usa el YAML indicado con `--config`; sin argumento, `config/config.yaml`. Si no existe, la orden termina indicando que se cree desde la plantilla.
 2. Una ruta explícita se busca primero respecto al directorio de ejecución, después respecto a la raíz. Se siguen aceptando `config_db.yaml` y `.config_db.yaml` como nombres en `InfluxDBms/`.
 3. Configuraciones del repositorio usan el `.env` de la raíz, sin búsqueda en directorios padre. Un YAML externo usa el `.env` de su propio directorio. La API Python acepta `dotenv_path=...` para selección explícita.
 4. Variables del proceso tienen prioridad sobre `.env`. El YAML solicita variables mediante `${NOMBRE}`; una variable definida en el proceso no sustituye un literal YAML sin marcador. Se expanden mapas/listas y marcadores dentro de cadenas.
@@ -51,7 +50,7 @@ Comprobar configuración sin conectar:
 
 ```bash
 msfeat-pipeline --check-config
-msfeat-pipeline --check-config --config pkgs/.config.yaml
+msfeat-pipeline --check-config --config otra/config.yaml
 ```
 
 Procesar el registro configurado:
@@ -61,18 +60,16 @@ msfeat-pipeline
 msfeat-pipeline --config config/config.yaml --csv tests.csv --test-type 6MWT
 ```
 
-`--check-config` solo verifica configuración, no autentica ni demuestra conectividad. `msfeat-graficas` (figuras a partir del Excel) es auxiliar y no forma parte del pipeline.
-
-Los comandos de `pkgs` siguen aceptando `-c config/config.yaml`. Para usarlos se requiere también su entorno de dependencias (`python -m pip install ./pkgs`); el proyecto raíz no instala todos los subsistemas heredados de PostgreSQL/API.
+`--check-config` verifica la configuración, incluidos todos los parámetros de `processing`; no autentica ni demuestra conectividad. `msfeat-graficas` (figuras a partir del Excel) es auxiliar y no forma parte del pipeline.
 
 ## Selección, reanudación y niveles de información
 
 - `--ids 58,60`: procesa solo esos `id` del registro.
 - `--test-type 6MWT`: procesa solo ese tipo de test; sin la opción, todos.
-- `--missing-only`: usa el manifest para no volver a consultar los eventos completados; sus métricas se recalculan leyendo el almacén.
+- `--missing-only`: usa el manifest para no volver a consultar los eventos completados; sus métricas se recalculan leyendo el almacén. Antes de reutilizar un evento se comprueba que el paciente, la prueba y las fechas guardadas coinciden con el registro actual; si no, se vuelve a consultar (`WARN_STORED_IDENTITY`).
 - `--workers N`: N consultas simultáneas a InfluxDB (por defecto 1). La escritura y el análisis siguen en un único hilo y en el orden del registro.
 - Reintentos: si una consulta falla por conexión se reintenta tras las esperas de `influxdb.retry_waits_s` (5, 15 y 45 s); el número de intentos queda en el manifest y en `Estado_Eventos`.
-- `--stored-only`: recalcula solo los eventos ya guardados, sin ninguna consulta a InfluxDB. Es el modo para probar cambios de algoritmo o de parámetros.
+- `--stored-only`: recalcula solo los eventos ya guardados, sin ninguna consulta a InfluxDB. Es el modo para probar cambios de algoritmo o de parámetros. Un evento cuya identidad guardada no coincide con el registro queda `IDENTITY_MISMATCH`, sin métricas.
 - `--audit`: compara el almacén con el registro sin consultar InfluxDB.
 - `--verbose 0|1|2`: 0 muestra avisos y errores; 1 (por defecto) añade el progreso por evento y el resumen final; 2 añade el detalle de depuración (coste por evento, verificaciones, eventos reutilizados, ensayos repetidos).
 
@@ -140,54 +137,9 @@ Pasa al almacén actual las series del archivo único anterior que coinciden con
 - **InfluxDB.** Guarda la hora de reloj de Madrid etiquetada como UTC. Desde noviembre de 2025 todo lo verificable es coherente con eso.
 - **Qué hace el pipeline.** `msTools.timeutils.experiment_wallclock` descarta el desfase del registro y se queda con la hora de reloj (`19:24`), que es la que se busca en InfluxDB. No convierte a UTC. Si un evento anterior a noviembre de 2025 vuelve sin datos, se avisa en nivel 1 (`INFO_EMPTY_BEFORE_COHERENT_DATE`).
 
-## Paquete heredado (`pkgs/`), fuera del alcance
+## Paquete heredado retirado
 
-`msfeat-pipeline` y `msfeat-graficas` solo usan de `pkgs/` la parte compartida: la configuración (`msConfig`), los mensajes (`msTools.i18n`) y las utilidades de tiempo y de Flux (`msTools.timeutils`, `msTools.flux`); un test lo comprueba. La API, `DataManager`, `MovementDetector`, `CodeIDProcessor`, `ms_monitoring`, `msgait.service` e `InfluxDBms/` quedan fuera del TFG y se conservan sin mantener. `consulta_influxdb.py`, `InfluxDBms/cInfluxDB.py` y `pkgs/config.yaml` se retiraron: nada los usaba. La sección `movement` ya no está en la plantilla de configuración: solo la usa el detector heredado, que tiene su propio `pkgs/.config.yaml`.
-
-Lo que se corrigió en ese código antes de fijar el alcance:
-
-- **Credenciales:** ninguna está escrita en el código. La API exige `MSGAIT_API_KEY` en el entorno y, si falta, rechaza las peticiones protegidas.
-- **Flux:** todos los valores se insertan con `msTools.flux.flux_string`.
-- **PostgreSQL:** la conexión se abre al usarla; las escrituras validan cada fila, usan identificadores entre comillas, no modifican el DataFrame recibido y propagan los errores.
-- **Sin implementar:** `GaitClassifier` y `TrajectoryAnalyzer` lanzan `NotImplementedError`.
-- **Lecturas (LR-53):** `get_codeids_in_range` y `get_activity_ids_by_start_date_range` propagan el error en lugar de devolver una lista vacía, que no se distinguía de un rango sin datos.
-- **TLS (LR-59):** `pkgs/.config.yaml` verifica el certificado (`verify_ssl: true`). Que el certificado real del servidor sea válido solo se comprueba ejecutando contra él.
-- **Licencia (LR-62):** todo el repositorio es AGPL-3.0-or-later.
-
-### API (LR-43, LR-44)
-
-Todos los endpoints de datos exigen la cabecera `X-API-Key`. Límites (constantes al inicio de `pkgs/api.py`):
-
-| Endpoint | Límite | Valor | Por qué |
-| --- | --- | --- | --- |
-| `POST /gait/detect` | IDs por petición | de 1 a 50, enteros ≥ 1, sin duplicados | Cada ID es una ventana de actividad y cada una lanza consultas a InfluxDB. |
-| `POST /gait/detect` | `head_rows` | de 0 a 50 (por defecto 5) | La respuesta solo lleva la vista previa. |
-| `GET /sensor-data` | Rango temporal | ≤ 10 min | Un 6MWT dura 6 min. |
-| `GET /sensor-data` | Filas devueltas | ≤ 100 000 | A unas 110 filas/s, 10 min son unas 66 000 filas. Si se supera, error 413. |
-| `GET /codeids`, `GET /activity-windows` | Rango temporal | ≤ 31 días | Solo devuelven metadatos. |
-| `GET /codeids`, `GET /activity-windows` | Paginación | `limit` 100 por defecto, máximo 500; `offset` | Cada fila ocupa unos 300 B. |
-| `GET /activity-windows` | `ids` | los mismos ≤ 50 | Misma validación que en el POST. |
-
-### Detector de movimiento (LR-46, LR-50)
-
-Parámetros en la sección `movement` (`pkgs/.config.yaml`):
-
-- **Continuidad (`min_continuous_seconds: 10`).** Se mide la duración de la racha activa en segundos, con las marcas de tiempo, y no el número de rachas. Sustituye a `min_continuous_hits`; no son equivalentes (antes tres muestras aisladas cumplían y una actividad sostenida no). Es obligatorio y es un valor operativo, tomado de la documentación del paquete, no calibrado. Las pausas de hasta `max_pause_s` no cortan la racha; por defecto es `1 / freq_band_min` (el periodo más largo de la banda analizada), porque un movimiento que oscila baja del umbral en cada ciclo.
-- **Potencia de banda.** Se integra la densidad espectral en frecuencia (suma de bins por la resolución), así que no depende del número de muestras por segmento. Los umbrales se reescalaron por la resolución anterior (50 Hz / 256 ≈ 0,195 Hz) para dar el mismo resultado que antes a 50 Hz: 0,125 → 0,0244 y 1000 → 195,3.
-- **Frecuencia de muestreo.** Depende del calcetín (de unos 38 a unos 110 Hz). Se mide con las marcas de tiempo y es la que usa el análisis espectral, de modo que la banda no se desplaza; si se aparta de la nominal más de `fs_tolerance` (0,10) se avisa (`MVNT-FS-DEV`).
-- **Último tramo.** Las ventanas son de 256 muestras y antes se descartaba el resto final (hasta casi 5 s a 50 Hz). `tail_policy: align` (por defecto) analiza una última ventana alineada con el final, solapada con la anterior; `tail_policy: minimum` analiza el resto tal cual si tiene al menos `tail_min_samples`.
-- **Unión de tramos.** Dos tramos separados hasta `merge_gap_s` (10 s) solo se unen si en el hueco hay datos (ningún intervalo entre muestras mayor que `max_pause_s`) y esos datos están dentro de una racha activa. Un hueco sin datos o con datos inactivos ya no se etiqueta como movimiento.
-
-Elegidos sin dato de referencia y, por tanto, provisionales: el valor por defecto de `max_pause_s`, `fs_tolerance: 0.10` (el mismo que `processing.fs_tolerance`) y `tail_policy: align` como política por defecto.
-
-### Limitaciones que se dejan sin corregir
-
-- **Hora (LR-47).** `detect_effective_gait` acepta cualquier ISO 8601, pero conviven contratos distintos (ver el párrafo siguiente).
-- **API (LR-52).** Hay cierre de conexiones y `/health/ready`, pero las conexiones y el detector se comparten entre peticiones, el arranque usa la hora UTC sin zona y una frecuencia nominal de 50 Hz. No se ha probado con carga ni concurrencia.
-- **Servicio (LR-61).** `pkgs/msgait.service` es del despliegue del tutor: apunta a DPC_2024 y a otro entorno, con `--reload`. No despliega este repositorio y se conserva tal cual.
-- **Ventanas por número de muestras (LR-50).** Una ventana de 256 muestras puede contener un hueco de datos; su frecuencia se mide sin contar el hueco, pero la ventana no se parte.
-
-Solo está probado con simulaciones (`tests/test_access_lr.py`); no hay base PostgreSQL de pruebas. Limitación conocida, deducida del código y no comprobada con datos: las tablas heredadas se rellenan con la hora de reloj de InfluxDB etiquetada como UTC, pero `ensure_utc()` convierte las consultas a UTC real, así que puede haber un desfase de 1-2 h entre lo que se guarda y lo que se busca.
+`msfeat-pipeline` y `msfeat-graficas` solo usan de `pkgs/` la configuración (`msConfig`), los mensajes (`msTools.i18n`) y las utilidades de tiempo y de Flux (`msTools.timeutils`, `msTools.flux`); un test lo comprueba. El resto del paquete heredado (la API, `DataManager`, `MovementDetector`, `CodeIDProcessor`, `ms_monitoring`, `msgait.service`, su documentación, su `.config.yaml` y sus dependencias) se retiró del repositorio el 18/10/2026, porque declararlo fuera del alcance no resolvía sus fallos. Sigue en el historial de Git y en el repositorio original (DPC_2024).
 
 ## Gráficas
 
