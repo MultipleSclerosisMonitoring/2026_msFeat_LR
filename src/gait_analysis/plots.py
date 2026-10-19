@@ -340,9 +340,10 @@ class GaitVisualizer:
             values = np.sort(data_clean.to_numpy(dtype=float))
             positions = np.arange(1, len(values) + 1)
             median = float(np.median(values))
-            plt.figure(figsize=(8, max(3.5, 0.45 * len(values) + 1.5)))
+            # La altura crece con los pacientes, con un tope para que la figura quepa en una página.
+            plt.figure(figsize=(8, min(9.0, max(3.5, 0.45 * len(values) + 1.5))))
             plt.hlines(positions, SYMMETRY_RANGE[0], values, color="#c9d3dd", linewidth=1)
-            plt.scatter(values, positions, s=45, color="#1f77b4", zorder=3)
+            plt.scatter(values, positions, s=45 if len(values) <= 30 else 18, color="#1f77b4", zorder=3)
             # Separador decimal del idioma activo: coma en español, punto en el catálogo inglés.
             shown = f"{median:.1f}".replace(".", _(","))
             plt.axvline(x=median, color='#52606d', linestyle=':', label=_("Mediana ({0} %)").format(shown))
