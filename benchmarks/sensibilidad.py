@@ -35,6 +35,7 @@ sys.path[:0] = [str(ROOT / "pkgs"), str(ROOT / "src")]
 from gait_analysis.metrics import PRESSURE_CHANNELS, GaitMetricsCalculator, ProcessingConfig  # noqa: E402
 from gait_analysis.storage import SignalStore, list_keys  # noqa: E402
 from msConfig import load_config  # noqa: E402
+from msTools.timeutils import criterion_for  # noqa: E402
 
 OUTPUT = ROOT / "data" / "sensibilidad"
 
@@ -86,7 +87,10 @@ def main(argv: list[str] | None = None) -> pd.DataFrame:
     rows = []
     h5 = config["paths"]["h5_path"]
     with SignalStore(h5) as store:
-        keys = [key for key in list_keys(h5) if f"/{args.prueba}/" in key][:args.max_series]
+        # Solo las series descargadas con el criterio horario vigente para su fecha (R80).
+        keys = [key for key in list_keys(h5) if f"/{args.prueba}/" in key
+                and store.meta(key).get("hora_influx", "civil") == criterion_for(store.meta(key).get("d_from"), config["registry"]["influx_time"])]
+        keys = keys[:args.max_series]
         for position, key in enumerate(keys, 1):
             frame = store.read(key)
             for name, (_cfg, change) in cases.items():

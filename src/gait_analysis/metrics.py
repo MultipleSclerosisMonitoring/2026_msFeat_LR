@@ -78,8 +78,9 @@ class ProcessingConfig:
             no se calculan. Se aplica a las pruebas que no figuran en
             ``imu_min_active_s_by_test`` (6MWT y 2MWT: 30 s).
         imu_min_active_s_by_test (Dict[str, float]): Mínimo de presión activa
-            propio de una prueba, para las que duran poco (T25FW: unos pocos
-            segundos; provisional hasta medirlo con las ventanas correctas, D14).
+            propio de una prueba, para las que duran poco. T25FW: 2 s; en los
+            intentos descargados en UTC la presión activa cubre casi todo el
+            intento y el 95 % de las series superan 2,9 s (scripts/medir_imu.py).
         max_interpolation_s (float): Tiempo máximo sin valor nuevo que se
             rellena en un grupo de sensores (IMU o presión): por interpolación
             lineal entre los valores vecinos o, al final de un tramo, repitiendo

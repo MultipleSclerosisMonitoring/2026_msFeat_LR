@@ -31,6 +31,7 @@ sys.path[:0] = [str(ROOT / "pkgs"), str(ROOT / "src")]
 from gait_analysis.metrics import IMU_CHANNELS, GaitMetricsCalculator, ProcessingConfig  # noqa: E402
 from gait_analysis.storage import SignalStore, list_keys  # noqa: E402
 from msConfig import load_config  # noqa: E402
+from msTools.timeutils import criterion_for  # noqa: E402
 
 OUTPUT = ROOT / "data" / "medicion_imu"
 
@@ -99,8 +100,11 @@ def main() -> pd.DataFrame:
     with SignalStore(h5) as store:
         keys = list_keys(h5)
         for position, key in enumerate(keys, 1):
-            frame = store.read(key)
             meta = store.meta(key)
+            # Solo las series descargadas con el criterio horario vigente para su fecha (R80).
+            if meta.get("hora_influx", "civil") != criterion_for(meta.get("d_from"), config["registry"]["influx_time"]):
+                continue
+            frame = store.read(key)
             device = str(frame["mac"].iloc[0]) if "mac" in frame and len(frame) else "desconocido"
             labels.setdefault(device, f"calcetin_{len(labels) + 1:02d}")
             try:

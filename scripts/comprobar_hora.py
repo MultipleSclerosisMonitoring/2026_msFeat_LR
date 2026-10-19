@@ -199,11 +199,13 @@ def main(argv: list[str] | None = None) -> pd.DataFrame:
     parser.add_argument("--n-por-estrato", type=int, default=2)
     parser.add_argument("--semilla", type=int, default=2026)
     parser.add_argument("--prueba", default=None, help="Solo este código de prueba (por ejemplo 6MWT)")
+    parser.add_argument("--ids", default=None, help="Identificadores de evento separados por comas, en lugar de la muestra")
     args = parser.parse_args(argv)
     config = load_config(args.config)
-    trials, _invalid = load_registry(config["paths"]["registry_csv"], args.prueba, None,
+    wanted = [i.strip() for i in args.ids.split(",") if i.strip()] if args.ids else None
+    trials, _invalid = load_registry(config["paths"]["registry_csv"], args.prueba, wanted,
                                      config.get("registry", {}).get("exclude_codeids"))
-    chosen = sample_trials(trials, args.n_por_estrato, args.semilla)
+    chosen = trials if wanted else sample_trials(trials, args.n_por_estrato, args.semilla)
     print(f"{len(chosen)} eventos elegidos de {len(trials)} (hasta {args.n_por_estrato} por prueba y mes, semilla {args.semilla})")
     rows = []
     with InfluxDBClient(**influx_client_options(config)) as client:
@@ -219,7 +221,7 @@ def main(argv: list[str] | None = None) -> pd.DataFrame:
             print(f"  [{position}/{len(chosen)}] evento {trial.trial_id} ({trial.test_type})", flush=True)
     result = pd.DataFrame(rows)
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    path = OUTPUT / f"comprobacion_hora_{args.prueba or 'todas'}_semilla{args.semilla}.csv"
+    path = OUTPUT / (f"comprobacion_hora_ids_{len(chosen)}.csv" if wanted else f"comprobacion_hora_{args.prueba or 'todas'}_semilla{args.semilla}.csv")
     result.to_csv(path, index=False)
     print(f"Detalle por evento: {path}")
     if "coincide" in result:

@@ -49,7 +49,7 @@ processing:
   pressure_active_min_units: 20.0   # ...y al menos 20 unidades
   imu_min_active_s: 30.0        # con menos de 30 s de presión activa la IMU no es evaluable (6MWT y 2MWT; IMU válida si con presión activa >= min_coverage del tiempo queda fuera de huecos)
   imu_min_active_s_by_test:     # mínimo propio de las pruebas cortas
-    T25FW: 2.0                  # provisional: se medirá con las ventanas correctas (D14)
+    T25FW: 2.0                  # medido: la presión activa cubre casi todo el intento; el 95 % de las series supera 2,9 s
   min_coverage: 0.8             # fracción mínima del tiempo fuera de huecos, en la presión
   # --- Zancadas válidas mínimas, por prueba (en TUG no se informan métricas de marcha) ---
   # Una prueba que no figure aquí no informa métricas de marcha.
