@@ -30,6 +30,9 @@ MIN_N_CORRELATION = 10
 FDR_ALPHA = 0.05
 # El índice de simetría implementado toma valores entre 0 y 200 %.
 SYMMETRY_RANGE = (0.0, 200.0)
+# Métricas que no entran en las matrices de correlación: el balanceo es 100 menos
+# el apoyo, así que cada correlación suya repetiría la del apoyo con el signo cambiado.
+CORRELATION_OMITTED = ("balanceo_prc",)
 FOOT_COLORS = {"Left": "#1f77b4", "Right": "#d95f02"}
 
 
@@ -59,8 +62,9 @@ def related_by_construction(first: str, second: str) -> bool:
 
     Son pares que no pueden informar de una asociación real: apoyo y balanceo
     del mismo pie (suman 100), zancadas y cadencia de zancada del mismo pie
-    (una sale de la otra y de la duración) y el índice de simetría con la
-    cadencia de cada pie (se calcula a partir de ellas).
+    (una sale de la otra y de la duración), decaimiento y pendiente de la
+    cadencia del mismo pie (salen de la misma recta) y el índice de simetría
+    con la cadencia de cada pie (se calcula a partir de ellas).
 
     Args:
         first (str): Nombre de una columna ``{test}_{pie}_{métrica}``.
@@ -77,7 +81,8 @@ def related_by_construction(first: str, second: str) -> bool:
 
     (foot_a, metric_a), (foot_b, metric_b) = parts(first), parts(second)
     metrics = {metric_a, metric_b}
-    if foot_a and foot_a == foot_b and metrics in ({"apoyo_prc", "balanceo_prc"}, {"zancadas", "cadencia_zancada"}):
+    same_foot_pairs = ({"apoyo_prc", "balanceo_prc"}, {"zancadas", "cadencia_zancada"}, {"decaimiento_prc", "pendiente_cadencia"})
+    if foot_a and foot_a == foot_b and metrics in same_foot_pairs:
         return True
     return SYMMETRY_METRIC in metrics and "cadencia_zancada" in metrics
 
@@ -368,8 +373,10 @@ class GaitVisualizer:
         Cada par usa sus propios casos completos y solo se calcula con al menos
         ``MIN_N_CORRELATION`` pacientes. La unidad es el paciente (una fila por
         sujeto), por lo que no hay medidas repetidas del mismo sujeto dentro de
-        una correlación. Junto a cada figura se exporta un CSV con N, rho, p,
-        p ajustado por FDR y la causa de exclusión de cada par.
+        una correlación. Las métricas de ``CORRELATION_OMITTED`` no entran, para
+        no repetir contrastes en la familia del FDR. Junto a cada figura se
+        exporta un CSV con N, rho, p, p ajustado por FDR y la causa de exclusión
+        de cada par.
         """
         if self.df is None:
             return
@@ -377,8 +384,9 @@ class GaitVisualizer:
         out_subfolder = os.path.join(self.out_dir, "correlaciones")
         os.makedirs(out_subfolder, exist_ok=True)
 
+        omitted = tuple(f"_{name}" for name in CORRELATION_OMITTED)
         for test in self.tests:
-            cols_test = self._metric_columns(test)
+            cols_test = [c for c in self._metric_columns(test) if not c.endswith(omitted)]
             if len(cols_test) < 2:
                 continue
             table = spearman_pairs(self.df[cols_test], MIN_N_CORRELATION)

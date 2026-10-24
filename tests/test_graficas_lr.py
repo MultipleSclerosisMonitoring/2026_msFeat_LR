@@ -20,6 +20,7 @@ def write_book(path, patients=14, sheets=('Datos_Pacientes', 'Ensayos', 'Procede
         'TUG_duracion_seg': 10.0,
         'TUG_Left_cadencia_zancada': 60 + base, 'TUG_Right_cadencia_zancada': 61 + base + rng.normal(0, 0.1, patients),
         'TUG_Left_apoyo_prc': 60 - base, 'TUG_Right_apoyo_prc': rng.normal(60, 5, patients),
+        'TUG_Left_balanceo_prc': 40 + base,
         'TUG_Left_excursion_tobillo_cm': [5.0 + i if i < 5 else np.nan for i in range(patients)],  # poco disponible
         'TUG_symmetry_index': [150.0 if i == 0 else float(i) if i < patients - 2 else np.nan for i in range(patients)],
     }).astype(object).fillna('N/A')
@@ -62,6 +63,8 @@ def test_pairs_related_by_construction_are_left_out_of_the_family():
     assert not related_by_construction('6MWT_Left_apoyo_prc', '6MWT_Right_balanceo_prc')       # pies distintos
     assert not related_by_construction('6MWT_Left_stride_length_cm', '6MWT_Left_excursion_tobillo_cm')
     assert not related_by_construction('6MWT_symmetry_index', '6MWT_Left_apoyo_prc')
+    assert related_by_construction('6MWT_Left_decaimiento_prc', '6MWT_Left_pendiente_cadencia')
+    assert not related_by_construction('6MWT_Left_decaimiento_prc', '6MWT_Right_pendiente_cadencia')
     base = np.arange(12.0)
     frame = pd.DataFrame({'T_Left_apoyo_prc': 60 - base, 'T_Left_balanceo_prc': 40 + base, 'T_Left_cadencia_zancada': base ** 2})
     table = spearman_pairs(frame).set_index(['variable_x', 'variable_y'])
@@ -89,6 +92,8 @@ def test_figures_and_correlation_table_are_generated(tmp_path, caplog):
     strong = table[(table['variable_x'] == 'TUG_Left_cadencia_zancada') & (table['variable_y'] == 'TUG_Left_apoyo_prc')].iloc[0]
     assert strong['n'] == 14 and strong['rho'] == -1.0 and bool(strong['significativo_fdr'])
     assert table.loc[table['rho'].notna(), 'p_fdr'].ge(table.loc[table['rho'].notna(), 'p'] - 1e-12).all()
+    # El balanceo repetiría las correlaciones del apoyo: no entra en la familia.
+    assert not (table['variable_x'].str.contains('balanceo') | table['variable_y'].str.contains('balanceo')).any()
 
     for name in ('correlaciones/correlacion_TUG.png', 'asimetria/asimetria_TUG.png',
                  'dispersion/scatter_TUG.png', 'boxplots/boxplot_cadencia.png'):

@@ -91,6 +91,12 @@ poetry run msfeat-graficas
 
 [Guía completa de configuración, precedencia, rutas y pruebas](config/README.md).
 
+**Dudas abiertas.** Las preguntas pendientes y las ya resueltas están en [`dudas/dudas.yaml`](dudas/dudas.yaml). `DUDAS.pdf` se genera a partir de ese archivo y no se versiona (está en `.gitignore`), para que no haya dos copias que puedan diferir. Para obtenerlo:
+
+```bash
+poetry run python dudas/generar_dudas.py   # escribe DUDAS.pdf en la raíz; necesita reportlab (extra dev)
+```
+
 # Limitaciones declaradas
 
 **Métricas del TFG, sin validar con una referencia.** No hay eventos anotados, distancias medidas ni otro dispositivo con el que comparar; la comprobación disponible es visual (Grafana) y de coherencia interna. En concreto:

@@ -242,3 +242,6 @@ informe/tfg_modelo.pdf
 
 # TFG de ejemplo de otros autores (solo consulta local)
 informe/ejemplos/
+
+# Revisión manual en Grafana: lleva CodeID y las anotaciones de la autora (scripts/listar_zancadas_incoherentes.py)
+resultados_excel/revision_zancadas_*.xlsx
