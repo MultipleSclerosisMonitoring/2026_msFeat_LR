@@ -72,7 +72,7 @@ REPORT_SCOPE = (
     "calibre la longitud. El decaimiento del 6MWT es la pendiente de la "
     "cadencia minuto a minuto. No hay eventos anotados ni otro dispositivo de referencia: la "
     "comprobación disponible es visual (Grafana) y de coherencia interna. Por eso siguen sin validar con una referencia "
-    "la detección de giros y sus umbrales, la correspondencia de cada contacto de talón con un apoyo real, la polaridad de "
+    "la detección de giros y sus umbrales, la correspondencia de cada contacto de talón con un apoyo real, la escala de "
     "la presión (la lectura es relativa, no una presión absoluta), la longitud de zancada y la excursión del tobillo. Dentro de un tramo sin huecos se supone que no "
     "falta ninguna muestra; eso cubre las ráfagas y los retrasos de recepción, no las pérdidas pequeñas sin hueco detectable. Una celda vacía significa que la métrica no "
     "pudo calcularse; nunca se escribe cero en su lugar. Los valores con estado WARNING se conservan y entran siempre en "

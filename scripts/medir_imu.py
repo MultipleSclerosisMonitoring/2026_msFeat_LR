@@ -46,13 +46,15 @@ def imu_new_values(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     return t, new
 
 
-def measure(frame: pd.DataFrame, calc: GaitMetricsCalculator, gap_s: float) -> dict:
+def measure(frame: pd.DataFrame, calc: GaitMetricsCalculator, gap_s: float, test_type: str | None = None) -> dict:
     """Mide una serie.
 
     Args:
         frame (pd.DataFrame): Serie de un pie tal como está en el almacén.
         calc (GaitMetricsCalculator): Calculador con la configuración actual.
         gap_s (float): Tiempo sin valor nuevo a partir del cual hay hueco.
+        test_type (str | None): Prueba de la serie, para aplicar su mínimo de
+            presión activa (``imu_min_active_s_by_test``).
 
     Returns:
         dict: Medidas de la serie.
@@ -61,7 +63,7 @@ def measure(frame: pd.DataFrame, calc: GaitMetricsCalculator, gap_s: float) -> d
     duration = float(t[-1] - t[0]) if len(t) > 1 else np.nan
     times = t[new]
     intervals = np.diff(times)
-    prepared = calc.preparar(frame)
+    prepared = calc.preparar(frame, test_type)
     active = calc._pressure_active(prepared.data, prepared.fs)
     tp = prepared.t
     # Tiempo desde el último valor nuevo de la IMU en cada muestra preparada.
@@ -108,7 +110,7 @@ def main() -> pd.DataFrame:
             device = str(frame["mac"].iloc[0]) if "mac" in frame and len(frame) else "desconocido"
             labels.setdefault(device, f"calcetin_{len(labels) + 1:02d}")
             try:
-                row = measure(frame, calc, processing.max_interpolation_s)
+                row = measure(frame, calc, processing.max_interpolation_s, meta.get("t_code"))
             except Exception as error:  # se informa y se sigue
                 row = {"error": str(error)[:120]}
             rows.append({"prueba": meta.get("t_code", ""), "pie": meta.get("foot", ""), "calcetin": labels[device], **row})

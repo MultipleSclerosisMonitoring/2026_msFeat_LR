@@ -10,8 +10,10 @@ un tramo excluido entre ellos (giro, hueco de presión o sin ritmo) y con una
 duración dentro de la banda del código. El nivel estable de cada serie es la
 mediana de sus zancadas a más de 5 de cualquier giro, sin la primera. Las
 zancadas que duran 1,6 veces el nivel estable o más se cuentan aparte como
-probablemente dobles (un contacto perdido) y no entran en la media. Solo
-salen agregados por pantalla.
+probablemente dobles (un contacto perdido) y no entran en la media. La
+variación de cada posición es su media respecto a la de las zancadas alejadas
+de los giros, en %, así que la fila de referencia vale 0. Solo salen agregados
+por pantalla.
 """
 from __future__ import annotations
 
@@ -88,7 +90,9 @@ def main() -> pd.DataFrame:
     """Recorre los eventos del 6MWT y resume el tiempo de zancada junto a los giros.
 
     Returns:
-        pd.DataFrame: Una fila por posición de la zancada respecto al giro.
+        pd.DataFrame: Una fila por posición de la zancada respecto al giro, con
+        el cociente medio, su variación en % respecto a las zancadas alejadas
+        de los giros y el porcentaje de dobles.
     """
     config = load_config(None)
     cfg = ProcessingConfig.from_mapping(config.get("processing"))
@@ -121,6 +125,8 @@ def main() -> pd.DataFrame:
     rows.append({"zancada": "lejos", "antes": reference[0], "antes_dobles_prc": reference[1],
                  "despues": reference[0], "despues_dobles_prc": reference[1]})
     table = pd.DataFrame(rows)
+    for side in ("antes", "despues"):
+        table.insert(table.columns.get_loc(side) + 1, f"{side}_var_prc", (table[side] / reference[0] - 1) * 100)
     print(f"Series de 6MWT con giros: {series}; giros: {turns}")
     print(table.round(3).to_string(index=False))
     return table
