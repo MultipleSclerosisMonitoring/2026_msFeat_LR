@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "Si utiliza este software, cítelo con estos metadatos."
+type: software
+title: "2026_msFeat_LR: métricas de la marcha a partir de calcetines con sensores"
+abstract: >-
+  Aplicación en Python que descarga de InfluxDB las señales de marcha de unos
+  calcetines con sensores inerciales y de presión, las guarda en HDF5 y calcula
+  por ensayo y pie métricas de la marcha (cadencia, fases de apoyo y balanceo,
+  decaimiento en el 6MWT, simetría, longitud de zancada y excursión del tobillo)
+  con su estado de confianza. Desarrollada en el Trabajo Fin de Grado
+  «Identificación de atributos cuantificables para monitorización de
+  alteraciones en la marcha» (Universidad Politécnica de Madrid, 2026).
+authors:
+  - family-names: "Rosado Rivas"
+    given-names: "Lucía"
+    affiliation: "Universidad Politécnica de Madrid"
+repository-code: "https://github.com/MultipleSclerosisMonitoring/2026_msFeat_LR"
+url: "https://multiplesclerosismonitoring.github.io/2026_msFeat_LR/"
+license: AGPL-3.0-or-later
+keywords:
+  - análisis de la marcha
+  - esclerosis múltiple
+  - sensores inerciales
+  - calcetines inteligentes
+  - Python

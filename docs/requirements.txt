@@ -1,0 +1,5 @@
+# Versiones exactas para compilar la documentación (flujo docs.yml). El proyecto
+# se instala aparte con `python -m pip install ".[graficos]"`; poetry.lock no cambia.
+sphinx==8.1.3
+myst-parser==4.0.1
+furo==2024.8.6

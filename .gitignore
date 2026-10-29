@@ -245,3 +245,12 @@ informe/ejemplos/
 
 # Revisión manual en Grafana: lleva CodeID y las anotaciones de la autora (scripts/listar_zancadas_incoherentes.py)
 resultados_excel/revision_zancadas_*.xlsx
+
+# Datos con CodeID y documentos privados: retirados del repositorio y de su historial el 29/10/2026.
+# La memoria y las dudas están en el repositorio privado 2026_msFeat_LR_memoria.
+tests.csv
+resultados_excel/*.xlsx
+DatasetMaestro.xlsx
+INFORME_CLINICO_FINAL.xlsx
+informe/
+dudas/

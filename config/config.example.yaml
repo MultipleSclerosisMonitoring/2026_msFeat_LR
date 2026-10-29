@@ -84,7 +84,7 @@ processing:
   turn_margin_after_strides: 2  # y después (arranque); solo si la IMU es válida y hay giros detectados
   min_steady_s: 3.0
   # --- Zancadas: contacto de talón por presión ---
-  heel_channel: S2              # S2 = talón; S0 y S1 = antepié
+  heel_channel: S2              # S2 = talón; S0 = antepié exterior; S1 = antepié interior
   pressure_stance_is_low: true  # lo que se guarda es una tensión que baja con la carga: valor bajo = apoyo
   cycle_min_s: 0.8              # tiempo de zancada mínimo y separación mínima entre contactos de talón
   cycle_max_s: 2.5              # tiempo de zancada máximo

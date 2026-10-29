@@ -24,15 +24,16 @@ This project focuses on the automated acquisition and processing of high-frequen
 │   └── README.md            # Technical documentation for the module
 ├── pipeline_test.py, graficas_tfg.py, GaitMetricsCalculator.py   # Launchers kept under their historical names
 ├── benchmarks/              # Time/memory benchmark per event
-├── scripts/                 # Tools: translations, review of reference trials, migration of the old HDF5 file
-├── dudas/ + DUDAS.pdf       # Open questions for the supervisor (source and PDF)
+├── scripts/                 # Tools: translations, review of reference trials, measurements behind the report (saturation, long cycles, turn agreement), migration of the old HDF5 file
+├── docs/                    # Sphinx documentation (published on GitHub Pages by .github/workflows/docs.yml)
+├── CITATION.cff             # How to cite this repository
 ├── tests/                   # Offline tests
 ├── config/                  # YAML configuration and guide
-├── data/                    # Data storage
+├── data/                    # Local data storage (not versioned)
 ├── InfluxDBms/              # Legacy connection YAML (references to .env variables, no credentials)
 ├── pyproject.toml           # Project metadata, dependency ranges, commands and licence
 ├── poetry.lock              # Exact versions the tests ran with
-├── .github/workflows/       # Tests on Python 3.11, 3.12 and 3.13 from a clean install
+├── .github/workflows/       # Tests on Python 3.11, 3.12 and 3.13 from a clean install; documentation build
 └── README.md                # This file (Main documentation) 
 ```
 
@@ -91,18 +92,23 @@ poetry run msfeat-graficas
 
 [Guía completa de configuración, precedencia, rutas y pruebas](config/README.md).
 
-**Dudas abiertas.** Las preguntas pendientes y las ya resueltas están en [`dudas/dudas.yaml`](dudas/dudas.yaml). `DUDAS.pdf` se genera a partir de ese archivo y no se versiona (está en `.gitignore`), para que no haya dos copias que puedan diferir. Para obtenerlo:
+**Documentación.** La documentación del código se genera con Sphinx a partir de estos README y de los docstrings (formato Google) y se publica en <https://multiplesclerosismonitoring.github.io/2026_msFeat_LR/>. Para compilarla en local, sin tocar `poetry.lock`:
 
 ```bash
-poetry run python dudas/generar_dudas.py   # escribe DUDAS.pdf en la raíz; necesita reportlab (extra dev)
+python -m pip install ".[graficos]" -r docs/requirements.txt
+python -m sphinx -W --keep-going -b html docs docs/_build/html
 ```
 
+**Cómo citar.** Los metadatos están en [`CITATION.cff`](CITATION.cff) (GitHub los muestra como *Cite this repository*). En APA: Rosado Rivas, L. (2026). *2026_msFeat_LR* [Software]. GitHub. https://github.com/MultipleSclerosisMonitoring/2026_msFeat_LR
+
+**Datos y documentos que no están en el repositorio.** El registro de ensayos (`tests.csv`), las señales descargadas (`data/`) y el *DataSet Maestro* (`resultados_excel/`) contienen los códigos de los pacientes y no se distribuyen: se retiraron del repositorio y de su historial el 29/10/2026 y están en `.gitignore`. Para ejecutar el pipeline hacen falta ese registro y el acceso a la base de datos. La memoria del TFG y las dudas para los directores están en un repositorio privado.
 # Limitaciones declaradas
 
 **Métricas del TFG, sin validar con una referencia.** No hay eventos anotados, distancias medidas ni otro dispositivo con el que comparar; la comprobación disponible es visual (Grafana) y de coherencia interna. En concreto:
 
-- **Giros (LR-18).** Se detectan por ángulo acumulado en torno a la vertical estimada. Los umbrales (25 y 10 grados/s, 90 grados) no están calibrados con giros etiquetados.
-- **Zancadas y cadencia (LR-19, LR-20).** La cadencia es de zancada, por pie, a partir del contacto de talón por presión. No se ha comprobado con anotaciones que cada contacto detectado sea un apoyo real.
+- **Giros (LR-18).** Se detectan por ángulo acumulado en torno a la vertical estimada. Los umbrales (25 y 10 grados/s, 90 grados) no están calibrados con giros etiquetados. Con un sesgo en el giroscopio de un pie aparecen giros inexistentes; no se corrige, pero `scripts/medir_concordancia_giros.py` marca los giros que el otro pie no confirma, sin decidir qué sensor acierta.
+- **Zancadas y cadencia (LR-19, LR-20).** La cadencia es de zancada, por pie, a partir del contacto de talón por presión. No se ha comprobado con anotaciones que cada contacto detectado sea un apoyo real. Un apoyo no detectado deja una zancada de doble duración que puede entrar en la banda válida; `scripts/medir_ciclos_largos.py` marca los ciclos largos respecto al ritmo local y mide su efecto, sin excluirlos ni atribuirlos a un contacto perdido.
+- **Rango del giroscopio.** En parte de los calcetines el giroscopio satura en 286,72 grados/s (`scripts/medir_saturacion.py`) y la longitud de zancada de esas series sale más corta. No se excluyen.
 - **Polaridad de la presión (LR-22).** La presión sube cuando se pisa y el valor guardado baja; la lectura es relativa, no una presión absoluta, y por eso cada sensor se compara con su propio rango. No hay calibración física por hardware.
 - **Longitud de zancada (LR-25).** Integración entre pies planos, sin constante que calibrar. No hay distancia de referencia (tampoco anotada en los 6MWT) ni error de estimación. En el T25FW se avisa si la suma de longitudes de un intento no es coherente con los 7,62 m de la prueba (`WARN_T25FW_DISTANCE`, columnas `t25fw_suma_longitudes_m` y `t25fw_distancia_coherente`); es un aviso, no una validación ni una calibración.
 - **Excursión del tobillo y MTC (LR-26).** La excursión no tiene señal de referencia; la MTC no se calcula.

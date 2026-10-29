@@ -16,7 +16,7 @@ logger = logging.getLogger("msGait.GaitMetricsCalculator")
 IMU_CHANNELS = ("Ax", "Ay", "Az", "Gx", "Gy", "Gz")
 # El detector de giros trabaja con velocidad angular: solo la vertical estimada o un canal del giroscopio.
 TURN_AXES = ("vertical", "Gx", "Gy", "Gz")
-PRESSURE_CHANNELS = ("S0", "S1", "S2")  # S0 y S1: antepié; S2: talón
+PRESSURE_CHANNELS = ("S0", "S1", "S2")  # antepié: S0 exterior, S1 interior; S2: talón
 SIGNAL_CHANNELS = (*IMU_CHANNELS, *PRESSURE_CHANNELS)
 # Los huecos y la cobertura se miden por grupo de sensores.
 SENSOR_GROUPS = {"imu": IMU_CHANNELS, "presion": PRESSURE_CHANNELS}
