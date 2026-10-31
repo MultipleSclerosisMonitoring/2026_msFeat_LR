@@ -17,6 +17,8 @@ authors:
 repository-code: "https://github.com/MultipleSclerosisMonitoring/2026_msFeat_LR"
 url: "https://multiplesclerosismonitoring.github.io/2026_msFeat_LR/"
 license: AGPL-3.0-or-later
+version: "1.0"
+date-released: "2026-10-31"
 keywords:
   - análisis de la marcha
   - esclerosis múltiple
