@@ -231,17 +231,20 @@ class GaitVisualizer:
         suffixes = tuple(f"_{name}" for name in (*REPORT_METRICS, SYMMETRY_METRIC))
         return [c for c in self.df.columns if c.startswith(f"{test}_") and c.endswith(suffixes)]
 
-    def _save(self, out_file: str, note: str) -> None:
+    def _save(self, out_file: str, note: str, tight_bbox: bool = False) -> None:
         """Añade el pie de procedencia (si está activado), guarda la figura actual y la cierra.
 
         Args:
             out_file (str): Ruta del PNG.
             note (str): Tamaño de muestra y criterio de inclusión de la figura.
+            tight_bbox (bool): Recorta el PNG a su contenido; lo necesitan las matrices,
+                cuyas celdas cuadradas impiden a ``tight_layout`` dar sitio a las etiquetas.
         """
         figure = plt.gcf()
+        bbox = "tight" if tight_bbox else None
         if not self.provenance_footer:
             figure.tight_layout()
-            figure.savefig(out_file, dpi=300)
+            figure.savefig(out_file, dpi=300, bbox_inches=bbox)
             plt.close(figure)
             logger.debug(_("DEBUG_PLOT_SAVED: {f}").format(f=out_file))
             return
@@ -252,7 +255,7 @@ class GaitVisualizer:
         )
         figure.tight_layout(rect=(0, 0.05, 1, 1))
         figure.text(0.01, 0.012, f"{note}\n{origin}", fontsize=6.5, color="#52606d", ha="left", va="bottom")
-        figure.savefig(out_file, dpi=300)
+        figure.savefig(out_file, dpi=300, bbox_inches=bbox)
         plt.close(figure)
         logger.debug(_("DEBUG_PLOT_SAVED: {f}").format(f=out_file))
 
@@ -412,7 +415,7 @@ class GaitVisualizer:
             mask = corr.isna()
 
             plt.figure(figsize=(12, 10))
-            sns.heatmap(corr, mask=mask, annot=marks, fmt="", annot_kws={"fontsize": 6}, cmap="coolwarm", vmin=-1, vmax=1, square=True)
+            sns.heatmap(corr, mask=mask, annot=marks, fmt="", annot_kws={"fontsize": 10}, cmap="coolwarm", vmin=-1, vmax=1, square=True)
             plt.title(_("Matriz de Correlación: {t}").format(t=test) + " (Spearman, exploratoria)")
 
             out_file = os.path.join(out_subfolder, f"correlacion_{test}.png")
@@ -420,6 +423,7 @@ class GaitVisualizer:
                 out_file,
                 f"Análisis exploratorio. Un valor por paciente; cada par con sus casos completos y n >= {MIN_N_CORRELATION} "
                 f"({len(computed)} de {len(table)} pares). * p ajustado por FDR (Benjamini-Hochberg) < {FDR_ALPHA}.",
+                tight_bbox=True,
             )
 
     def plot_dynamic_scatter(self) -> None:
